@@ -64,8 +64,7 @@ def select_codes(scan, only):
 
 def run_jobs(cfg, args, table, jobs):
     """jobs: [(video, folder)] 를 차례대로 처리."""
-    from thumb_agent.browser import open_studio_page
-    from thumb_agent.studio import StudioThumbnailUploader, parse_video_id
+    from thumb_agent.studio import parse_video_id
 
     prepared = []
     for video, folder in jobs:
@@ -80,6 +79,13 @@ def run_jobs(cfg, args, table, jobs):
         prepared.append((video_id, thumbs))
     if not prepared:
         return 1
+    return run_uploads(cfg, args, table, prepared)
+
+
+def run_uploads(cfg, args, table, prepared):
+    """prepared: [(video_id, {언어코드: 이미지경로})] 를 스튜디오에 올린다. 실패가 있으면 1."""
+    from thumb_agent.browser import open_studio_page
+    from thumb_agent.studio import StudioThumbnailUploader
 
     failed_any = False
     with open_studio_page(**browser_options(cfg, args)) as page:

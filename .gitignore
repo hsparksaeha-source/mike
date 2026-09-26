@@ -7,3 +7,4 @@ logs/
 progress/
 config.json
 jobs.csv
+google_translate_api_key.txt
