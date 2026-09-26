@@ -11,14 +11,17 @@
   .lang { cursor: pointer; }
   #dialog { position: fixed; inset: 40px; background: #fff; border: 1px solid #333; padding: 20px; }
   .item { display: flex; justify-content: space-between; width: 400px; padding: 8px 0; }
-  #menu { display: none; }
+  #menu { display: none; position: absolute; background: #fff; border: 1px solid #333; }
+  .field { border: 1px solid #999; min-height: 24px; width: 380px; padding: 4px; white-space: pre-wrap; }
 </style>
 </head>
 <body>
 <h1>언어</h1>
 <button id="add-lang">언어 추가</button>
-<!-- 숨겨진 언어 목록: 여기 있는 이름은 표에 없는 언어이므로 무시되어야 함 -->
-<ul id="menu"><li>힌디어</li><li>태국어</li><li>일본어</li></ul>
+<!-- '언어 추가' 목록: 평소에는 숨겨져 있고, 여기 있는 이름은 표의 언어로 세면 안 됨 -->
+<div id="menu" role="listbox">
+  <div role="option">힌디어</div><div role="option">태국어</div><div role="option">일본어</div>
+</div>
 <div id="table"></div>
 
 <div id="dialog" role="dialog" hidden>
@@ -29,6 +32,10 @@
       <button id="close" aria-label="닫기">X</button>
     </div>
   </div>
+  <div><span>제목</span></div>
+  <div id="title-field" class="field" contenteditable="true"></div>
+  <div><span>설명</span></div>
+  <div id="desc-field" class="field" contenteditable="true" style="min-height:60px"></div>
   <div class="item"><span>썸네일</span><button id="thumb-btn">추가</button></div>
   <div class="item"><span>오디오</span><button id="audio-btn">추가</button></div>
   <div class="item"><span>수동 자막</span><button>추가</button></div>
@@ -43,7 +50,10 @@
     ["네팔어", false], ["중국어(간체)", false], ["아랍어", false],
   ];
   const state = Object.fromEntries(langs.map(([n, has]) => [n, has]));
+  // 기존 언어는 제목·설명이 이미 들어가 있음
+  const texts = Object.fromEntries(langs.map(([n]) => [n, {title: n + " 기존 제목", desc: "기존 설명"}]));
   window.uploaded = {};
+  window.saved = {};
   let current = null;
 
   // 실제 스튜디오에서 생길 수 있는 상황 흉내: ?overlay=1 (이름 위를 투명한 요소가 덮음), ?norole=1 (창에 role=dialog 없음)
@@ -70,6 +80,8 @@
     current = name;
     document.getElementById("dlg-title").textContent = name;
     document.getElementById("thumb-btn").textContent = state[name] ? "변경" : "추가";
+    document.getElementById("title-field").textContent = texts[name].title;
+    document.getElementById("desc-field").textContent = texts[name].desc;
     document.getElementById("save").disabled = true;
     document.getElementById("dialog").hidden = false;
   }
@@ -94,8 +106,27 @@
     // 업로드 처리 시간 흉내
     setTimeout(() => { document.getElementById("save").disabled = false; }, 400);
   };
+  for (const id of ["title-field", "desc-field"]) {
+    document.getElementById(id).addEventListener("input", () => { document.getElementById("save").disabled = false; });
+  }
+  // '언어 추가' -> 목록에서 언어 선택 -> 표에 새 줄 (제목·설명 비어 있음)
+  document.getElementById("add-lang").onclick = () => { document.getElementById("menu").style.display = "block"; };
+  for (const opt of document.querySelectorAll("#menu [role=option]")) {
+    opt.onclick = () => {
+      const name = opt.textContent;
+      document.getElementById("menu").style.display = "none";
+      if (!(name in state)) {
+        langs.push([name, false]); state[name] = false; texts[name] = {title: "", desc: ""};
+        opt.remove();
+        render();
+      }
+    };
+  }
   document.getElementById("save").onclick = () => {
-    state[current] = true;
+    texts[current] = {title: document.getElementById("title-field").innerText.trim(),
+                      desc: document.getElementById("desc-field").innerText.trim()};
+    window.saved[current] = {...texts[current], thumb: window.uploaded[current] || null};
+    if (window.uploaded[current]) state[current] = true;
     document.getElementById("dialog").hidden = true;
     document.getElementById("file").value = "";
     render();
