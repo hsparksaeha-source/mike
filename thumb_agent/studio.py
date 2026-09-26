@@ -27,7 +27,9 @@ DEFAULT_UI_TEXT = {
     "upload_menu": ["파일 업로드", "업로드", "이미지 업로드", "Upload file", "Upload"],
     "save_button": ["업데이트", "게시", "저장", "완료", "Publish", "Update", "Save", "Done"],
     "close_button": ["닫기", "Close"],
-    "discard_button": ["삭제", "변경사항 삭제", "나가기", "Discard", "Discard changes", "Leave"],
+    # 저장하지 않고 창을 닫을 때 뜨는 확인창의 버튼 (방금 고른 썸네일만 취소됨).
+    # '삭제' 한 단어는 번역 자체를 지우는 버튼일 수 있으므로 절대 넣지 않는다.
+    "discard_button": ["변경사항 삭제", "변경사항 취소", "나가기", "Discard changes", "Discard", "Leave"],
 }
 
 VIDEO_ID_RE = re.compile(r"(?:v=|youtu\.be/|/video/|/shorts/|/live/)([A-Za-z0-9_-]{11})")
@@ -295,10 +297,16 @@ class StudioThumbnailUploader:
                 else:
                     page.keyboard.press("Escape")
                 time.sleep(0.5)
-                # '변경사항을 삭제할까요?' 확인창이 뜨면 삭제(나가기) 선택
-                discard = page.get_by_role("button", name=_exact(self.ui["discard_button"]))
-                if discard.count() > 0 and discard.first.is_visible():
-                    discard.first.click(timeout=3_000)
+                # '저장하지 않고 나갈까요?' 확인창이 뜨면 '나가기' 선택.
+                # 언어 창(썸네일 항목이 있는 창) 안의 버튼은 절대 누르지 않고, 별도 확인창에서만 찾는다.
+                label_re = _exact(self.ui["thumbnail_label"])
+                for confirm in page.get_by_role("dialog").all():
+                    if not confirm.is_visible() or confirm.get_by_text(label_re).count() > 0:
+                        continue
+                    discard = confirm.get_by_role("button", name=_exact(self.ui["discard_button"]))
+                    if discard.count() > 0 and discard.first.is_visible():
+                        discard.first.click(timeout=3_000)
+                        break
             except PlaywrightError:
                 pass
 
