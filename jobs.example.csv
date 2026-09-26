@@ -1,0 +1,4 @@
+# 여러 영상을 한 번에 처리할 때: 한 줄에 "동영상주소,썸네일폴더"
+video,folder
+https://youtu.be/XXXXXXXXXXX,C:\Users\me\Desktop\thumbs\autumn_orchard
+https://youtu.be/YYYYYYYYYYY,C:\Users\me\Desktop\thumbs\winter_house

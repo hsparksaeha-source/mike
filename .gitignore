@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# 로그인 정보가 들어 있으므로 절대 올리지 마세요
+browser_profile/
+logs/
+progress/
+config.json
+jobs.csv

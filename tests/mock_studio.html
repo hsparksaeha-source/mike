@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- 테스트용: YouTube 스튜디오 '언어' 화면을 흉내 낸 가짜 페이지 (실제 스튜디오 아님) -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Mock Studio Translations</title>
+<style>
+  body { font-family: sans-serif; }
+  .row { display: flex; gap: 40px; padding: 12px; border-bottom: 1px solid #ddd; }
+  .row > div { width: 160px; }
+  .lang { cursor: pointer; }
+  #dialog { position: fixed; inset: 40px; background: #fff; border: 1px solid #333; padding: 20px; }
+  .item { display: flex; justify-content: space-between; width: 400px; padding: 8px 0; }
+  #menu { display: none; }
+</style>
+</head>
+<body>
+<h1>언어</h1>
+<button id="add-lang">언어 추가</button>
+<!-- 숨겨진 언어 목록: 여기 있는 이름은 표에 없는 언어이므로 무시되어야 함 -->
+<ul id="menu"><li>힌디어</li><li>태국어</li><li>일본어</li></ul>
+<div id="table"></div>
+
+<div id="dialog" role="dialog" hidden>
+  <div style="display:flex; justify-content:space-between">
+    <h2 id="dlg-title"></h2>
+    <div>
+      <button id="save" disabled>업데이트</button>
+      <button id="close" aria-label="닫기">X</button>
+    </div>
+  </div>
+  <div class="item"><span>썸네일</span><button id="thumb-btn">추가</button></div>
+  <div class="item"><span>오디오</span><button>추가</button></div>
+  <div class="item"><span>수동 자막</span><button>추가</button></div>
+  <input type="file" id="file" accept="image/*" style="display:none">
+</div>
+
+<script>
+  const langs = [
+    ["구자라트어", false], ["그리스어", false], ["네덜란드어", true],
+    ["네팔어", false], ["중국어(간체)", false], ["아랍어", false],
+  ];
+  const state = Object.fromEntries(langs.map(([n, has]) => [n, has]));
+  window.uploaded = {};
+  let current = null;
+
+  function render() {
+    const t = document.getElementById("table");
+    t.innerHTML = '<div class="row"><div>언어</div><div>제목 및 설명</div><div>썸네일</div></div>';
+    for (const [name] of langs) {
+      const r = document.createElement("div");
+      r.className = "row";
+      r.innerHTML = `<div class="lang">${name}</div><div>게시됨</div><div>${state[name] ? "게시됨" : "–"}</div>`;
+      r.querySelector(".lang").onclick = () => openDialog(name);
+      t.appendChild(r);
+    }
+  }
+  function openDialog(name) {
+    current = name;
+    document.getElementById("dlg-title").textContent = name;
+    document.getElementById("thumb-btn").textContent = state[name] ? "변경" : "추가";
+    document.getElementById("save").disabled = true;
+    document.getElementById("dialog").hidden = false;
+  }
+  document.getElementById("thumb-btn").onclick = () => document.getElementById("file").click();
+  document.getElementById("file").onchange = (e) => {
+    const f = e.target.files[0];
+    window.uploaded[current] = f.name;
+    // 업로드 처리 시간 흉내
+    setTimeout(() => { document.getElementById("save").disabled = false; }, 400);
+  };
+  document.getElementById("save").onclick = () => {
+    state[current] = true;
+    document.getElementById("dialog").hidden = true;
+    document.getElementById("file").value = "";
+    render();
+  };
+  document.getElementById("close").onclick = () => { document.getElementById("dialog").hidden = true; };
+  render();
+</script>
+</body>
+</html>
