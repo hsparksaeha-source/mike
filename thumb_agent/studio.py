@@ -142,7 +142,7 @@ class StudioThumbnailUploader:
             try:
                 status = self.upload_one(name, Path(path))
             except Exception as exc:  # 한 언어가 실패해도 다음 언어는 계속 진행
-                print(f"실패 ({exc.__class__.__name__}: {(str(exc).splitlines() or [""])[0][:120]})")
+                print(f"실패 ({exc.__class__.__name__}: {(str(exc).splitlines() or [''])[0][:120]})")
                 shot = self._screenshot(video_id, code)
                 print(f"      화면 캡처: {shot}")
                 summary["failed"].append(code)
