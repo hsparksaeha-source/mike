@@ -30,9 +30,11 @@
     </div>
   </div>
   <div class="item"><span>썸네일</span><button id="thumb-btn">추가</button></div>
-  <div class="item"><span>오디오</span><button>추가</button></div>
+  <div class="item"><span>오디오</span><button id="audio-btn">추가</button></div>
   <div class="item"><span>수동 자막</span><button>추가</button></div>
   <input type="file" id="file" accept="image/*" style="display:none">
+  <input type="file" id="audio-file" accept="audio/*" style="display:none">
+  <div id="audio-dialog" hidden><h3>오디오 트랙 추가</h3></div>
 </div>
 
 <script>
@@ -71,7 +73,21 @@
     document.getElementById("save").disabled = true;
     document.getElementById("dialog").hidden = false;
   }
+  // ?custombtn=1: 실제 스튜디오처럼 썸네일 '추가'가 <button> 이 아닌 사용자 정의 요소인 경우
+  if (params.get("custombtn")) {
+    const old = document.getElementById("thumb-btn");
+    const custom = document.createElement("ytcp-button");
+    custom.id = "thumb-btn";
+    custom.innerHTML = "<div>추가</div>";
+    old.replaceWith(custom);
+  }
   document.getElementById("thumb-btn").onclick = () => document.getElementById("file").click();
+  window.audioOpened = false;
+  document.getElementById("audio-btn").onclick = () => {
+    window.audioOpened = true;
+    document.getElementById("audio-dialog").hidden = false;
+    document.getElementById("audio-file").click();
+  };
   document.getElementById("file").onchange = (e) => {
     const f = e.target.files[0];
     window.uploaded[current] = f.name;

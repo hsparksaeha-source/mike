@@ -296,54 +296,97 @@ class StudioThumbnailUploader:
         return best[1] if best else None
 
     def _thumbnail_button(self, dialog):
-        """'썸네일' 글자와 같은 줄에 있는 추가/변경 버튼을 찾는다."""
-        label = dialog.get_by_text(_exact(self.ui["thumbnail_label"])).first
-        label.wait_for(state="visible", timeout=10_000)
+        """'썸네일' 글자와 **같은 줄**에 있는 추가/변경 버튼을 찾는다.
+
+        언어 창에는 썸네일·오디오·수동 자막 줄마다 똑같은 '추가' 버튼이 있으므로,
+        화면상 위치(세로 높이)가 '썸네일' 글자와 같은 버튼만 고른다. 없으면 아무것도 누르지 않고 멈춘다.
+        """
+        label_re = _exact(self.ui["thumbnail_label"])
         button_re = _exact(self.ui["add_button"] + self.ui["change_button"])
-        for depth in range(1, 8):
-            box = label.locator(f"xpath=ancestor::*[{depth}]")
-            buttons = box.get_by_role("button", name=button_re)
-            if buttons.count() == 0:
-                buttons = box.locator("button, [role=button]").filter(has_text=button_re)
-            count = buttons.count()
-            if count == 1:
-                return buttons.first
-            if count > 1:
-                # 오디오/자막 줄까지 포함될 만큼 올라왔다 -> 문서 순서상 '썸네일' 바로 뒤의 버튼
-                return buttons.first
-        raise RuntimeError("썸네일 '추가' 버튼을 찾지 못했습니다")
+        named_re = re.compile(r"(썸네일|thumbnail).*(추가|변경|add|change|upload|업로드)", re.I)
+
+        labels = dialog.get_by_text(label_re)
+        labels.first.wait_for(state="visible", timeout=10_000)
+        candidates = []
+        for loc in (dialog.get_by_role("button", name=button_re),
+                    dialog.get_by_role("button", name=named_re),
+                    dialog.locator("button, [role=button], ytcp-button, tp-yt-paper-button").filter(has_text=button_re),
+                    dialog.get_by_text(button_re)):
+            candidates.extend(loc.all())
+
+        best = None
+        for i in range(labels.count()):
+            label = labels.nth(i)
+            if not label.is_visible():
+                continue
+            lb = label.bounding_box()
+            if not lb:
+                continue
+            label_y = lb["y"] + lb["height"] / 2
+            for button in candidates:
+                try:
+                    if not button.is_visible():
+                        continue
+                    bb = button.bounding_box()
+                except PlaywrightError:
+                    continue
+                if not bb or bb["x"] + bb["width"] <= lb["x"]:
+                    continue  # 글자보다 왼쪽에 있는 버튼은 제외
+                diff = abs(bb["y"] + bb["height"] / 2 - label_y)
+                if diff > max(lb["height"], bb["height"]) * 0.75 + 6:
+                    continue  # 다른 줄(오디오, 자막)의 버튼
+                key = (diff, bb["width"] * bb["height"])
+                if best is None or key < best[0]:
+                    best = (key, button)
+        if best is None:
+            raise RuntimeError("썸네일 줄의 '추가' 버튼을 찾지 못해 아무것도 누르지 않고 멈췄습니다")
+        return best[1]
+
+    def _is_image_input(self, element) -> bool:
+        accept = (element.get_attribute("accept") or "").lower()
+        return "image" in accept or any(ext in accept for ext in (".jpg", ".jpeg", ".png"))
 
     def _choose_file(self, dialog, button, image: Path):
         page = self.page
+
+        def use_chooser(chooser):
+            # 오디오/동영상용 파일 선택창이면 이미지를 넣지 않고 멈춘다
+            accept = (chooser.element.get_attribute("accept") or "").lower()
+            if accept and not self._is_image_input(chooser.element):
+                chooser.set_files([])
+                raise RuntimeError(f"썸네일이 아닌 파일 선택창이 열려 멈췄습니다 (accept={accept})")
+            chooser.set_files(str(image))
+
         # 1) 버튼을 누르면 바로 파일 선택창이 뜨는 경우
         try:
             with page.expect_file_chooser(timeout=6_000) as chooser:
                 button.click()
-            chooser.value.set_files(str(image))
+            use_chooser(chooser.value)
             return
         except PlaywrightTimeout:
             pass
-        # 2) '파일 업로드' 같은 메뉴가 먼저 뜨는 경우
+        # 오디오 트랙 같은 다른 창이 열렸으면 멈춘다
+        if page.get_by_text(re.compile(r"오디오 트랙|audio track", re.I)).filter(visible=True).count() > 0:
+            raise RuntimeError("썸네일이 아닌 '오디오 트랙' 창이 열려 멈췄습니다")
+        # 2) '파일 업로드' 같은 메뉴가 먼저 뜨는 경우 (메뉴 항목만 누른다)
         menu_re = _exact(self.ui["upload_menu"])
         for item in (page.get_by_role("menuitem", name=menu_re),
-                     page.get_by_role("option", name=menu_re),
-                     page.get_by_text(menu_re)):
+                     page.get_by_role("option", name=menu_re)):
             if item.count() > 0 and item.first.is_visible():
                 try:
                     with page.expect_file_chooser(timeout=6_000) as chooser:
                         item.first.click()
-                    chooser.value.set_files(str(image))
+                    use_chooser(chooser.value)
                     return
                 except PlaywrightTimeout:
                     pass
-        # 3) 숨겨진 파일 입력칸에 직접 넣기
-        inputs = dialog.locator("input[type=file]")
-        if inputs.count() == 0:
-            inputs = page.locator("input[type=file]")
-        if inputs.count() > 0:
-            inputs.last.set_input_files(str(image))
-            return
-        raise RuntimeError("파일 선택창을 열지 못했습니다")
+        # 3) 숨겨진 '이미지용' 파일 입력칸에 직접 넣기
+        for scope in (dialog, page):
+            for element in scope.locator("input[type=file]").all():
+                if self._is_image_input(element):
+                    element.set_input_files(str(image))
+                    return
+        raise RuntimeError("썸네일 파일 선택창을 열지 못했습니다")
 
     def _save(self, dialog):
         save_re = _exact(self.ui["save_button"])

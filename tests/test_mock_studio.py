@@ -143,6 +143,23 @@ def test_same_image_for_all_languages(tmp_path):
         browser.close()
 
 
+def test_never_clicks_audio_add_button(tmp_path):
+    """썸네일 '추가'가 <button> 이 아니어도, 바로 아래 오디오 '추가'를 누르지 않고 썸네일에 넣는다."""
+    from thumb_agent.studio import ALL_LANGUAGES
+    table = LanguageTable()
+    make_images(tmp_path, ["english_thumb.jpg"])
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        page = browser.new_page()
+        uploader = StudioThumbnailUploader(
+            page, table, log_dir=tmp_path / "logs", progress_dir=tmp_path / "progress",
+            step_delay=0.1, studio_url=MOCK_URL + "&custombtn=1")
+        summary = uploader.upload_all("abcdefghijk", {ALL_LANGUAGES: tmp_path / "english_thumb.jpg"})
+        assert page.evaluate("window.audioOpened") is False
+        assert sorted(summary["ok"]) == ["ar", "el", "gu", "ne", "zh-Hans"], summary
+        browser.close()
+
+
 if __name__ == "__main__":
     import tempfile
     for test in (test_filename_matching, test_upload_flow_on_mock):
