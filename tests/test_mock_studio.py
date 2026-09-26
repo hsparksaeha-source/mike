@@ -106,6 +106,43 @@ def test_upload_flow_on_mock(tmp_path):
         browser.close()
 
 
+def test_upload_when_label_is_covered_and_dialog_has_no_role(tmp_path):
+    """이름 위를 다른 요소가 덮어 일반 클릭이 막히고, 창에 role=dialog 가 없어도 올라가는지."""
+    table = LanguageTable()
+    thumbs_dir = tmp_path / "thumbs"
+    make_images(thumbs_dir, ["gu.jpg", "el.jpg"])
+    scan = scan_folder(thumbs_dir, table)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        page = browser.new_page()
+        uploader = StudioThumbnailUploader(
+            page, table, log_dir=tmp_path / "logs", progress_dir=tmp_path / "progress",
+            step_delay=0.1, studio_url=MOCK_URL + "&overlay=1&norole=1")
+        summary = uploader.upload_all("abcdefghijk", scan.matched)
+        assert sorted(summary["ok"]) == ["el", "gu"], summary
+        assert page.evaluate("window.uploaded") == {"구자라트어": "gu.jpg", "그리스어": "el.jpg"}
+        browser.close()
+
+
+def test_same_image_for_all_languages(tmp_path):
+    """영문 썸네일 한 장을 스튜디오에 등록된 모든 언어에 넣는다."""
+    from thumb_agent.studio import ALL_LANGUAGES
+    table = LanguageTable()
+    make_images(tmp_path, ["english_thumb.jpg"])
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        page = browser.new_page()
+        uploader = StudioThumbnailUploader(
+            page, table, log_dir=tmp_path / "logs", progress_dir=tmp_path / "progress",
+            step_delay=0.1, studio_url=MOCK_URL)
+        summary = uploader.upload_all("abcdefghijk", {ALL_LANGUAGES: tmp_path / "english_thumb.jpg"})
+        assert sorted(summary["ok"]) == ["ar", "el", "gu", "ne", "zh-Hans"]
+        assert summary["skipped"] == ["nl"]     # 이미 썸네일 있음
+        assert summary["no_file"] == [] and summary["failed"] == []
+        assert set(page.evaluate("window.uploaded").values()) == {"english_thumb.jpg"}
+        browser.close()
+
+
 if __name__ == "__main__":
     import tempfile
     for test in (test_filename_matching, test_upload_flow_on_mock):

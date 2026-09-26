@@ -4,7 +4,8 @@
   python main.py                                   # 질문에 답하면서 진행 (가장 쉬움)
   python main.py login                             # 처음 한 번: 유튜브 로그인
   python main.py check  --folder "썸네일폴더"        # 파일 이름 -> 언어 연결 확인
-  python main.py upload --video 영상주소 --folder "썸네일폴더"
+  python main.py upload --video 영상주소 --image "영문썸네일.jpg"   # 모든 언어에 같은 이미지
+  python main.py upload --video 영상주소 --folder "썸네일폴더"      # 언어별로 다른 이미지
   python main.py batch  --jobs jobs.csv            # 여러 영상 한꺼번에 (영상주소,폴더)
 """
 
@@ -64,11 +65,16 @@ def select_codes(scan, only):
 
 def run_jobs(cfg, args, table, jobs):
     """jobs: [(video, folder)] 를 차례대로 처리."""
-    from thumb_agent.studio import parse_video_id
+    from thumb_agent.studio import ALL_LANGUAGES, parse_video_id
 
     prepared = []
     for video, folder in jobs:
         video_id = parse_video_id(video)
+        if Path(folder).is_file():
+            # 이미지 한 장 -> 스튜디오에 등록된 모든 언어에 똑같이
+            print(f"\n===== 동영상 {video_id} / 모든 언어에 같은 썸네일: {Path(folder).name}")
+            prepared.append((video_id, {ALL_LANGUAGES: Path(folder)}))
+            continue
         scan = scan_folder(folder, table)
         print(f"\n===== 동영상 {video_id} / 폴더 {folder}")
         print_scan(scan, table)
@@ -136,7 +142,13 @@ def cmd_interactive(cfg, args, table):
         cmd_login(cfg, args)
 
     video = input("\n1) 동영상 주소 또는 ID 를 붙여넣으세요: ").strip()
-    folder = input("2) 썸네일 이미지 폴더 경로를 붙여넣으세요: ").strip().strip('"').strip("'")
+    folder = input("2) 썸네일 이미지 파일(모든 언어 공통) 또는 언어별 폴더 경로를 붙여넣으세요: ").strip().strip('"').strip("'")
+    if Path(folder).is_file():
+        answer = input(f"\n'{Path(folder).name}' 한 장을 모든 언어에 넣을까요? (y/n): ").strip().lower()
+        if answer not in ("y", "yes", "ㅛ", "네", "예"):
+            print("취소했습니다.")
+            return 0
+        return run_jobs(cfg, args, table, [(video, folder)])
     scan = scan_folder(folder, table)
     print_scan(scan, table)
     if not scan.matched:
@@ -181,7 +193,9 @@ def main(argv=None):
         p = sub.add_parser(name, help="썸네일 올리기" if name == "upload" else "여러 영상 한꺼번에")
         if name == "upload":
             p.add_argument("--video", required=True, help="동영상 주소 또는 ID")
-            p.add_argument("--folder", required=True, help="썸네일 이미지 폴더")
+            src = p.add_mutually_exclusive_group(required=True)
+            src.add_argument("--image", help="모든 언어에 똑같이 넣을 썸네일 이미지 한 장")
+            src.add_argument("--folder", help="언어별 썸네일 이미지 폴더")
         else:
             p.add_argument("--jobs", required=True, help="CSV: 영상주소,폴더 (한 줄에 하나)")
         p.add_argument("--only", help="이 언어코드만 (예: gu,el,nl)")
@@ -205,7 +219,7 @@ def main(argv=None):
         elif args.command == "check":
             cmd_check(cfg, args, table)
         elif args.command == "upload":
-            return run_jobs(cfg, args, table, [(args.video, args.folder)])
+            return run_jobs(cfg, args, table, [(args.video, args.image or args.folder)])
         elif args.command == "batch":
             return run_jobs(cfg, args, table, read_jobs(args.jobs))
         else:

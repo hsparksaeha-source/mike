@@ -44,6 +44,9 @@
   window.uploaded = {};
   let current = null;
 
+  // 실제 스튜디오에서 생길 수 있는 상황 흉내: ?overlay=1 (이름 위를 투명한 요소가 덮음), ?norole=1 (창에 role=dialog 없음)
+  const params = new URLSearchParams(location.search);
+  if (params.get("norole")) document.getElementById("dialog").removeAttribute("role");
   function render() {
     const t = document.getElementById("table");
     t.innerHTML = '<div class="row"><div>언어</div><div>제목 및 설명</div><div>썸네일</div></div>';
@@ -52,6 +55,12 @@
       r.className = "row";
       r.innerHTML = `<div class="lang">${name}</div><div>게시됨</div><div>${state[name] ? "게시됨" : "–"}</div>`;
       r.querySelector(".lang").onclick = () => openDialog(name);
+      if (params.get("overlay")) {
+        r.style.position = "relative";
+        const cover = document.createElement("div");
+        cover.style.cssText = "position:absolute; inset:0; background:transparent";
+        r.appendChild(cover);
+      }
       t.appendChild(r);
     }
   }

@@ -33,6 +33,9 @@ DEFAULT_UI_TEXT = {
     "discard_button": ["변경사항 삭제", "변경사항 취소", "나가기", "Discard changes", "Discard", "Leave"],
 }
 
+# upload_all 에 {ALL_LANGUAGES: 이미지} 로 넘기면 모든 언어에 같은 썸네일
+ALL_LANGUAGES = "*"
+
 VIDEO_ID_RE = re.compile(r"(?:v=|youtu\.be/|/video/|/shorts/|/live/)([A-Za-z0-9_-]{11})")
 
 
@@ -120,10 +123,16 @@ class StudioThumbnailUploader:
 
     # ------------------------------------------------------------------ 메인 루프
     def upload_all(self, video_id, thumbnails: dict) -> dict:
-        """thumbnails: {언어코드: 파일경로}. 결과 요약 dict 를 돌려준다."""
+        """thumbnails: {언어코드: 파일경로}. 결과 요약 dict 를 돌려준다.
+
+        {ALL_LANGUAGES: 파일경로} 를 주면 스튜디오에 등록된 모든 언어에 같은 이미지를 넣는다.
+        """
         self.open_translations(video_id)
         on_page = self.list_languages_on_page()
         done = self.load_progress(video_id)
+        if ALL_LANGUAGES in thumbnails:
+            same = thumbnails[ALL_LANGUAGES]
+            thumbnails = {code: same for code in on_page}
 
         summary = {"ok": [], "skipped": [], "failed": [], "not_in_studio": [], "no_file": []}
         summary["no_file"] = sorted(c for c in on_page if c not in thumbnails)
@@ -145,14 +154,14 @@ class StudioThumbnailUploader:
             try:
                 status = self.upload_one(name, Path(path))
             except Exception as exc:  # 한 언어가 실패해도 다음 언어는 계속 진행
-                print(f"실패 ({exc.__class__.__name__}: {(str(exc).splitlines() or [''])[0][:120]})")
+                print(f"실패 {(str(exc).splitlines() or [''])[0][:300]}")
                 shot = self._screenshot(video_id, code)
                 print(f"      화면 캡처: {shot}")
                 summary["failed"].append(code)
                 self._close_dialog()
                 continue
             print(status)
-            if status == "완료":
+            if status.startswith("완료"):
                 summary["ok"].append(code)
                 done.add(code)
                 self.save_progress(video_id, done)
@@ -161,64 +170,130 @@ class StudioThumbnailUploader:
         return summary
 
     def upload_one(self, language_name: str, image: Path) -> str:
-        dialog = self._open_language_dialog(language_name)
+        step = "언어 창 열기"
+        try:
+            self.last_open_method = None
+            dialog = self._open_language_dialog(language_name)
 
-        button = self._thumbnail_button(dialog)
-        label = (button.inner_text() or button.get_attribute("aria-label") or "").strip()
-        has_existing = bool(_exact(self.ui["change_button"]).match(label))
-        if has_existing and not self.overwrite:
-            self._close_dialog()
-            return "이미 썸네일 있음 (건너뜀 - 바꾸려면 '새 이미지로 바꾸기' 선택)"
-        if self.dry_run:
-            self._close_dialog()
-            return "확인만 함 (--dry-run)"
+            step = "썸네일 버튼 찾기"
+            button = self._thumbnail_button(dialog)
+            label = (button.inner_text() or button.get_attribute("aria-label") or "").strip()
+            has_existing = bool(_exact(self.ui["change_button"]).match(label))
+            if has_existing and not self.overwrite:
+                self._close_dialog()
+                return "이미 썸네일 있음 (건너뜀 - 바꾸려면 '새 이미지로 바꾸기' 선택)"
+            if self.dry_run:
+                self._close_dialog()
+                return f"확인만 함 (창 열기: {self.last_open_method}, 버튼: '{label}')"
 
-        image = ensure_uploadable(image, self.log_dir / "converted")
-        self._choose_file(dialog, button, image)
-        self._save(dialog)
+            step = "이미지 파일 선택"
+            image = ensure_uploadable(image, self.log_dir / "converted")
+            self._choose_file(dialog, button, image)
+
+            step = "업데이트 누르기"
+            self._save(dialog)
+        except Exception as exc:
+            raise RuntimeError(f"[{step}] {exc.__class__.__name__}: {(str(exc).splitlines() or [''])[0]}") from exc
         time.sleep(self.step_delay)
-        return "완료"
+        return f"완료 (창 열기: {self.last_open_method})"
 
     # ------------------------------------------------------------------ 단계별 동작
     def _open_language_dialog(self, language_name):
+        """언어 이름을 눌러 그 언어의 창을 연다. 막히면 여러 방법을 차례로 시도한다."""
+        page = self.page
         label = self._row_label(language_name).first
-        label.scroll_into_view_if_needed()
-        label.click()
-        dialog = self._wait_dialog(10_000)
-        if dialog is None:
-            # 이름 클릭으로 안 열리면 같은 줄의 '게시됨' 칸이나 수정(연필) 버튼을 눌러 본다.
-            cell_re = re.compile(r"^\s*(게시됨|초안|Published|Draft)\s*$|수정|Edit", re.I)
+        try:
+            label.scroll_into_view_if_needed(timeout=10_000)
+        except PlaywrightError:
+            pass
+        cell_re = re.compile(r"^\s*(게시됨|초안|Published|Draft)\s*$", re.I)
+        edit_re = re.compile(r"수정|편집|Edit", re.I)
+
+        def row_at(depth):
+            return label.locator(f"xpath=ancestor::*[{depth}]")
+
+        def click_row_cell():
+            # 같은 줄의 '게시됨' 칸 또는 수정(연필) 버튼
             for depth in range(1, 7):
-                row = label.locator(f"xpath=ancestor::*[{depth}]")
-                cells = row.get_by_text(cell_re)
-                if cells.count() == 0:
-                    cells = row.get_by_role("button", name=cell_re)
-                if cells.count() == 0:
+                row = row_at(depth)
+                targets = row.get_by_text(cell_re)
+                if targets.count() == 0:
+                    targets = row.get_by_role("button", name=edit_re)
+                if targets.count() == 0:
                     continue
-                row.hover()
-                try:
-                    cells.first.click(timeout=3_000)
-                except PlaywrightError:
-                    break
-                dialog = self._wait_dialog(8_000)
-                break
-        if dialog is None:
-            raise RuntimeError("언어 창이 열리지 않았습니다")
-        return dialog
+                row.hover(force=True, timeout=3_000)
+                targets.first.click(timeout=3_000, force=True)
+                return
+            raise RuntimeError("같은 줄의 칸을 찾지 못함")
+
+        def js_click_ancestors():
+            # 화면 위에 다른 것이 덮여 있어도 동작하도록 이름과 그 부모 요소에 직접 클릭 신호를 보낸다
+            label.evaluate("""el => {
+                for (let node = el, i = 0; node && i < 4; node = node.parentElement, i++) {
+                    node.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+                    if (document.querySelector('[role=dialog], tp-yt-paper-dialog, ytcp-dialog')) break;
+                }
+            }""")
+
+        attempts = [
+            ("일반 클릭", lambda: label.click(timeout=5_000)),
+            ("직접 클릭", lambda: label.evaluate("el => el.click()")),
+            ("부모 요소 클릭", js_click_ancestors),
+            ("같은 줄 칸 클릭", click_row_cell),
+            ("강제 클릭", lambda: label.click(timeout=5_000, force=True)),
+        ]
+        errors = []
+        for method, action in attempts:
+            try:
+                action()
+            except Exception as exc:
+                errors.append(f"{method}: {exc.__class__.__name__}")
+                continue
+            dialog = self._wait_dialog(6_000)
+            if dialog is not None:
+                self.last_open_method = method
+                return dialog
+            errors.append(f"{method}: 창 안 열림")
+            page.keyboard.press("Escape")
+        raise RuntimeError("언어 창이 열리지 않았습니다 (" + ", ".join(errors) + ")")
 
     def _wait_dialog(self, timeout_ms):
-        """썸네일 항목이 있는 창(dialog)을 기다린다."""
-        label_re = _exact(self.ui["thumbnail_label"])
+        """썸네일 항목이 있는 언어 창을 기다린다 (timeout_ms=0 이면 한 번만 확인)."""
         deadline = time.time() + timeout_ms / 1000
-        while time.time() < deadline:
-            for dialog in self.page.get_by_role("dialog").all():
-                try:
-                    if dialog.is_visible() and dialog.get_by_text(label_re).count() > 0:
-                        return dialog
-                except PlaywrightError:
-                    pass
+        while True:
+            try:
+                dialog = self._find_dialog()
+            except PlaywrightError:
+                dialog = None
+            if dialog is not None or time.time() >= deadline:
+                return dialog
             time.sleep(0.3)
-        return None
+
+    def _find_dialog(self):
+        label_re = _exact(self.ui["thumbnail_label"])
+        save_re = _exact(self.ui["save_button"])
+        button_re = _exact(self.ui["add_button"] + self.ui["change_button"])
+        candidates = self.page.locator("[role=dialog], [aria-modal=true], tp-yt-paper-dialog, ytcp-dialog").all()
+        for dialog in candidates:
+            if (dialog.is_visible() and dialog.get_by_text(label_re).count() > 0
+                    and dialog.get_by_role("button", name=button_re).count() > 0):
+                return dialog
+        # 창 표시가 없는 경우: 화면의 '썸네일' 글자에서 위로 올라가며 '업데이트' 버튼을 품은 가장 작은 영역.
+        # 언어 표 맨 위의 '썸네일' 제목 칸도 같은 글자라서, 가장 가까이에 업데이트 버튼이 있는 쪽을 고른다.
+        labels = self.page.get_by_text(label_re)
+        best = None
+        for i in range(labels.count()):
+            label = labels.nth(i)
+            if not label.is_visible():
+                continue
+            for depth in range(1, 9):
+                box = label.locator(f"xpath=ancestor::*[{depth}]")
+                if (box.get_by_role("button", name=save_re).count() > 0
+                        and box.get_by_role("button", name=button_re).count() > 0):
+                    if best is None or depth < best[0]:
+                        best = (depth, box)
+                    break
+        return best[1] if best else None
 
     def _thumbnail_button(self, dialog):
         """'썸네일' 글자와 같은 줄에 있는 추가/변경 버튼을 찾는다."""
@@ -285,9 +360,22 @@ class StudioThumbnailUploader:
         else:
             raise RuntimeError("'업데이트' 버튼이 활성화되지 않았습니다 (이미지 거부 가능성)")
         save.click()
-        dialog.wait_for(state="hidden", timeout=60_000)
+        # 창이 닫힐 때까지 기다린다
+        deadline = time.time() + 60
+        while self._wait_dialog(0) is not None:
+            if time.time() > deadline:
+                raise RuntimeError("'업데이트' 후 창이 닫히지 않았습니다")
+            time.sleep(0.5)
 
     def _close_dialog(self):
+        page = self.page
+        self._close_role_dialogs()
+        # 창 표시(role)가 없는 창이 아직 떠 있으면 Esc
+        if self._wait_dialog(0) is not None:
+            page.keyboard.press("Escape")
+            time.sleep(0.5)
+
+    def _close_role_dialogs(self):
         page = self.page
         for dialog in page.get_by_role("dialog").all():
             try:

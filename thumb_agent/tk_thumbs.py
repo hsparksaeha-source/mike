@@ -151,7 +151,10 @@ class ThumbnailRunner:
         self._run(self._upload_worker, video_id, studio_thumbs, overwrite, dry_run)
 
     def _upload_worker(self, video_id, thumbs, overwrite, dry_run):
-        print(f"\n===== 동영상 {video_id} / 썸네일 {len(thumbs)}개")
+        if "*" in thumbs:
+            print(f"\n===== 동영상 {video_id} / 모든 언어에 같은 썸네일: {thumbs['*'].name}")
+        else:
+            print(f"\n===== 동영상 {video_id} / 썸네일 {len(thumbs)}개")
         code = run_uploads(self.cfg, self._args(overwrite, dry_run), self.table, [(video_id, thumbs)])
         if code == 0:
             self._status("✅ 시험 실행 완료! 문제없으면 [썸네일 자동 등록]을 누르세요." if dry_run
