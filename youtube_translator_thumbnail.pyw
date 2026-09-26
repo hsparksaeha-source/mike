@@ -12,7 +12,6 @@ import sys
 
 # 같은 폴더의 썸네일 자동 등록 기능(thumb_agent) 불러오기
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from thumb_agent.folder import describe_scan, scan_folder
 from thumb_agent.tk_thumbs import ThumbnailRunner
 
 API_KEY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_translate_api_key.txt")
@@ -91,14 +90,11 @@ def add_clipboard_support(widget):
 class YouTubeTranslatorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("유튜브 다국어 자동 번역기 + 썸네일 자동 등록")
-        self.root.geometry("950x1000")
+        self.root.title("유튜브 다국어 자동 번역기 + 썸네일")
+        self.root.geometry("900x950")
         
         self.active_langs = {}
         self.lang_widgets = {}
-        self.thumb_paths = {}      # 언어코드 -> 썸네일 이미지 경로
-        self.folder_thumbs = {}    # 썸네일 폴더에서 찾은 {스튜디오 언어코드: 경로}
-        self.last_scan = None
         self.thumbs = ThumbnailRunner(self.root, self.set_status)
 
         self.create_top_frame()
@@ -133,8 +129,9 @@ class YouTubeTranslatorApp:
     def set_status(self, text, color="blue"):
         self.lbl_status.config(text=text, foreground=color)
 
+    # ---------------- 썸네일: 이미지 한 장을 스튜디오에 등록된 모든 언어에 똑같이 넣기 ----------------
     def create_thumbnail_frame(self):
-        frame = ttk.LabelFrame(self.root, text="[ 썸네일 자동 등록 ]", padding=(15, 10))
+        frame = ttk.LabelFrame(self.root, text="[ 썸네일 ]", padding=(15, 10))
         frame.pack(side="top", fill="x", padx=15, pady=5)
 
         ttk.Label(frame, text="동영상 주소:").grid(row=0, column=0, sticky="w", pady=3)
@@ -142,138 +139,44 @@ class YouTubeTranslatorApp:
         self.entry_video.grid(row=0, column=1, columnspan=2, sticky="we", padx=10, pady=3)
         add_clipboard_support(self.entry_video)
 
-        ttk.Label(frame, text="썸네일 이미지:", font=("", 10, "bold")).grid(row=1, column=0, sticky="w", pady=3)
-        self.entry_common_thumb = ttk.Entry(frame, width=66)
-        self.entry_common_thumb.grid(row=1, column=1, sticky="we", padx=10, pady=3)
-        add_clipboard_support(self.entry_common_thumb)
-        ttk.Button(frame, text="🖼️ 이미지 선택", command=self.browse_common_thumb).grid(row=1, column=2, sticky="e")
-        ttk.Label(frame, text="↑ 이 이미지 한 장을 스튜디오에 등록된 모든 언어에 똑같이 넣습니다.",
-                  foreground="gray").grid(row=2, column=1, sticky="w", padx=10)
-
-        ttk.Label(frame, text="(선택) 언어별 폴더:").grid(row=3, column=0, sticky="w", pady=3)
-        self.entry_thumb_folder = ttk.Entry(frame, width=66)
-        self.entry_thumb_folder.grid(row=3, column=1, sticky="we", padx=10, pady=3)
-        add_clipboard_support(self.entry_thumb_folder)
-        ttk.Button(frame, text="📁 폴더 선택", command=self.browse_thumb_folder).grid(row=3, column=2, sticky="e")
-        ttk.Label(frame, text="↑ 나라마다 다른 썸네일을 쓸 때만 사용 (위 '썸네일 이미지' 칸은 비워 두세요)",
-                  foreground="gray").grid(row=4, column=1, sticky="w", padx=10)
-
-        self.var_thumb_overwrite = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frame, text="이미 썸네일이 있는 언어도 새 이미지로 바꾸기",
-                        variable=self.var_thumb_overwrite).grid(row=5, column=1, sticky="w", padx=10)
+        ttk.Label(frame, text="썸네일 이미지:").grid(row=1, column=0, sticky="w", pady=3)
+        self.entry_thumb = ttk.Entry(frame, width=66)
+        self.entry_thumb.grid(row=1, column=1, sticky="we", padx=10, pady=3)
+        add_clipboard_support(self.entry_thumb)
+        ttk.Button(frame, text="🖼️ 이미지 선택", command=self.browse_thumb).grid(row=1, column=2, sticky="e")
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        ttk.Button(buttons, text="① 유튜브 로그인", command=self.thumbs.login).pack(side="left", padx=4)
-        ttk.Button(buttons, text="② 시험 실행 (올리지 않음)",
-                   command=lambda: self.start_thumbnail_upload(dry_run=True)).pack(side="left", padx=4)
-        ttk.Button(buttons, text="🖼️ 썸네일 자동 등록",
-                   command=lambda: self.start_thumbnail_upload(dry_run=False)).pack(side="left", padx=4)
-        ttk.Button(buttons, text="📜 진행 기록 보기", command=self.thumbs.show_log).pack(side="left", padx=4)
+        buttons.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Button(buttons, text="유튜브 로그인", command=self.thumbs.login).pack(side="left", padx=4)
+        ttk.Button(buttons, text="🖼️ 썸네일 등록", command=self.start_thumbnail_upload).pack(side="left", padx=4)
+        ttk.Button(buttons, text="📜 진행 기록", command=self.thumbs.show_log).pack(side="left", padx=4)
         frame.columnconfigure(1, weight=1)
 
-    def browse_common_thumb(self):
+    def browse_thumb(self):
         path = filedialog.askopenfilename(
             title="모든 언어에 넣을 썸네일 이미지 선택",
             filetypes=[("이미지 파일", "*.jpg *.jpeg *.png *.gif *.bmp *.jfif *.webp"), ("모든 파일", "*.*")])
         if path:
-            self.entry_common_thumb.delete(0, tk.END)
-            self.entry_common_thumb.insert(0, path)
-            self.set_status(f"🖼️ 모든 언어에 넣을 썸네일: {os.path.basename(path)}", "blue")
+            self.entry_thumb.delete(0, tk.END)
+            self.entry_thumb.insert(0, path)
 
-    def browse_thumb_folder(self):
-        folder = filedialog.askdirectory(title="썸네일 이미지가 들어 있는 폴더를 선택하세요")
-        if folder:
-            self.entry_thumb_folder.delete(0, tk.END)
-            self.entry_thumb_folder.insert(0, folder)
-            self.load_thumb_folder()
-
-    def load_thumb_folder(self):
-        """폴더의 이미지 파일 이름을 보고 각 언어 카드에 썸네일을 채운다."""
-        folder = self.entry_thumb_folder.get().strip().strip('"')
-        if not folder:
-            return False
-        try:
-            scan = scan_folder(folder, self.thumbs.table)
-        except FileNotFoundError as e:
-            messagebox.showerror("폴더 오류", str(e))
-            return False
-        self.folder_thumbs = dict(scan.matched)
-        self.last_scan = scan
-        for code in self.active_langs:
-            path = self.folder_thumbs.get(self.thumbs.code_for(code))
-            if path:
-                self.set_card_thumb(code, str(path))
-        filled = sum(1 for c in self.active_langs if c in self.thumb_paths)
-        missing = [self.active_langs[c] for c in self.active_langs if c not in self.thumb_paths]
-        msg = f"🖼️ 썸네일 {filled}/{len(self.active_langs)}개 언어에 연결됨"
-        if missing:
-            msg += f" (없음: {', '.join(missing[:5])}{' 외' if len(missing) > 5 else ''})"
-        if scan.unmatched:
-            msg += f" / 언어를 알 수 없는 파일 {len(scan.unmatched)}개"
-        self.set_status(msg, "blue" if not missing and not scan.unmatched else "red")
-        return True
-
-    def set_card_thumb(self, code, path):
-        if code not in self.lang_widgets:
-            return
-        if path:
-            self.thumb_paths[code] = path
-            self.lang_widgets[code]['thumb'].config(text=f"🖼️ {os.path.basename(path)}", foreground="green")
-        else:
-            self.thumb_paths.pop(code, None)
-            self.lang_widgets[code]['thumb'].config(text="🖼️ 썸네일 없음", foreground="gray")
-
-    def choose_card_thumb(self, code):
-        path = filedialog.askopenfilename(
-            title=f"[{self.active_langs[code]}] 썸네일 이미지 선택",
-            filetypes=[("이미지 파일", "*.jpg *.jpeg *.png *.gif *.bmp"), ("모든 파일", "*.*")])
-        if path:
-            self.set_card_thumb(code, path)
-
-    def start_thumbnail_upload(self, dry_run):
+    def start_thumbnail_upload(self):
         video = self.entry_video.get().strip()
+        image = self.entry_thumb.get().strip().strip('"')
         if not video:
-            messagebox.showwarning("경고", "썸네일을 넣을 동영상 주소를 입력해주세요.")
+            messagebox.showwarning("경고", "동영상 주소를 입력해주세요.")
             return
-        common = self.entry_common_thumb.get().strip().strip('"')
-        if common:
-            # 영문 썸네일 한 장을 스튜디오에 등록된 모든 언어에 똑같이
-            if not os.path.isfile(common):
-                messagebox.showerror("파일 오류", f"썸네일 이미지를 찾을 수 없습니다:\n{common}")
-                return
-            if self.thumbs.needs_login():
-                messagebox.showinfo("로그인 필요", "처음 사용하시면 먼저 [① 유튜브 로그인]을 해주세요.")
-                return
-            if not dry_run and not messagebox.askyesno(
-                    "확인", f"'{os.path.basename(common)}' 한 장을 스튜디오에 등록된 모든 언어에 넣을까요?\n\n"
-                            "진행 중에는 크롬 창을 건드리지 마세요."):
-                return
-            self.thumbs.upload(video, {"*": common}, overwrite=self.var_thumb_overwrite.get(), dry_run=dry_run)
-            return
-
-        if self.entry_thumb_folder.get().strip():
-            self.load_thumb_folder()
-        thumbs = {c: p for c, p in self.thumb_paths.items() if c in self.active_langs}
-        if not thumbs:
-            detail = ""
-            if self.last_scan is not None and self.entry_thumb_folder.get().strip():
-                detail = "\n\n" + describe_scan(self.last_scan)
-                extra = [c for c in self.last_scan.matched
-                         if c not in {self.thumbs.code_for(a) for a in self.active_langs}]
-                if extra:
-                    detail += ("\n아래 목록에 없는 언어의 이미지: "
-                               + ", ".join(self.thumbs.table.display_name(c) for c in extra)
-                               + "\n  → [새로운 언어 추가]로 해당 언어를 목록에 넣어 주세요.")
-            messagebox.showwarning("경고", "연결된 썸네일이 없습니다.\n[🖼️ 이미지 선택]으로 모든 언어에 넣을 썸네일 한 장을 골라주세요." + detail)
+        if not image or not os.path.isfile(image):
+            messagebox.showwarning("경고", "[🖼️ 이미지 선택]으로 썸네일 이미지를 골라주세요.")
             return
         if self.thumbs.needs_login():
-            messagebox.showinfo("로그인 필요", "처음 사용하시면 먼저 [① 유튜브 로그인]을 해주세요.")
+            messagebox.showinfo("로그인 필요", "처음 한 번은 [유튜브 로그인]을 먼저 해주세요.")
             return
-        if not dry_run and not messagebox.askyesno(
-                "확인", f"{len(thumbs)}개 언어에 썸네일을 등록할까요?\n\n진행 중에는 크롬 창을 건드리지 마세요."):
+        if not messagebox.askyesno(
+                "확인", f"'{os.path.basename(image)}' 를 이 동영상의 모든 언어에 썸네일로 넣을까요?\n\n"
+                        "진행 중에는 크롬 창을 건드리지 마세요."):
             return
-        self.thumbs.upload(video, thumbs, overwrite=self.var_thumb_overwrite.get(), dry_run=dry_run)
+        self.thumbs.upload(video, {"*": image})
 
     def create_language_control_frame(self):
         control_frame = ttk.Frame(self.root)
@@ -362,15 +265,6 @@ class YouTubeTranslatorApp:
         btn_copy_desc = ttk.Button(desc_frame, text="📋 설명 복사", command=lambda c=code: self.copy_desc(c), width=10)
         btn_copy_desc.pack(side="right")
 
-        thumb_frame = ttk.Frame(content_frame)
-        thumb_frame.pack(fill="x", pady=2)
-
-        lbl_thumb = ttk.Label(thumb_frame, text="🖼️ 썸네일 없음", foreground="gray")
-        lbl_thumb.pack(side="left", fill="x", expand=True)
-
-        btn_thumb = ttk.Button(thumb_frame, text="🖼️ 썸네일 선택", command=lambda c=code: self.choose_card_thumb(c), width=12)
-        btn_thumb.pack(side="right")
-
         right_frame = ttk.Frame(card)
         right_frame.pack(side="right", fill="y", padx=5)
 
@@ -380,14 +274,8 @@ class YouTubeTranslatorApp:
         self.lang_widgets[code] = {
             'card': card,
             'title': entry_title,
-            'desc': text_desc,
-            'thumb': lbl_thumb
+            'desc': text_desc
         }
-
-        # 썸네일 폴더를 이미 골라 두었다면 새로 추가한 언어에도 자동으로 연결
-        path = self.folder_thumbs.get(self.thumbs.code_for(code))
-        if path:
-            self.set_card_thumb(code, str(path))
 
     def add_new_language_from_combo(self):
         selection = self.combo_langs.get()
@@ -413,7 +301,6 @@ class YouTubeTranslatorApp:
             lang_name = self.active_langs[code]
             if messagebox.askyesno("삭제 확인", f"목록에서 '{lang_name}'을(를) 제거하시겠습니까?"):
                 self.lang_widgets[code]['card'].destroy()
-                self.thumb_paths.pop(code, None)
                 del self.active_langs[code]
                 del self.lang_widgets[code]
                 self.lbl_status.config(text=f"🗑️ {lang_name}이(가) 삭제되었습니다.", foreground="red")

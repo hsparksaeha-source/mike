@@ -1,7 +1,7 @@
 """Tkinter 창 프로그램에서 썸네일 등록 기능을 쓰기 위한 도우미.
 
 번역 프로그램(youtube_translator_maker.pyw)이 이것을 불러서
-'유튜브 로그인', '썸네일 자동 등록' 버튼을 동작시킨다.
+'유튜브 로그인', '썸네일 등록' 버튼을 동작시킨다.
 """
 
 import argparse
@@ -124,7 +124,7 @@ class ThumbnailRunner:
             self.root.after(0, self._ask_login_done)
             self._login_done.wait()
         print("로그인 정보가 저장되었습니다.\n")
-        self._status("✅ 유튜브 로그인 완료! 이제 썸네일 자동 등록을 누르면 됩니다.", "green")
+        self._status("✅ 유튜브 로그인 완료! 이제 [🖼️ 썸네일 등록]을 누르면 됩니다.", "green")
 
     def _ask_login_done(self):
         messagebox.showinfo("유튜브 로그인",

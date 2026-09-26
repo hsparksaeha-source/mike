@@ -181,7 +181,7 @@ class StudioThumbnailUploader:
             has_existing = bool(_exact(self.ui["change_button"]).match(label))
             if has_existing and not self.overwrite:
                 self._close_dialog()
-                return "이미 썸네일 있음 (건너뜀 - 바꾸려면 '새 이미지로 바꾸기' 선택)"
+                return "이미 썸네일 있음 (건너뜀)"
             if self.dry_run:
                 self._close_dialog()
                 return f"확인만 함 (창 열기: {self.last_open_method}, 버튼: '{label}')"
