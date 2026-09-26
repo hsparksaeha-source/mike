@@ -8,3 +8,5 @@ progress/
 config.json
 jobs.csv
 google_translate_api_key.txt
+client_secret*.json
+youtube_token.json
