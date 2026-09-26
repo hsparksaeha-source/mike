@@ -39,6 +39,19 @@ def test_filename_matching(tmp_path):
     assert [p.name for p in scan.unmatched] == ["random.jpg"]
 
 
+def test_translator_language_codes_and_names():
+    """번역기(youtube_translator_maker.pyw)의 106개 언어 코드/이름이 모두 같은 언어로 인식되는지."""
+    import ast
+    src = (ROOT / "youtube_translator_maker.pyw").read_text(encoding="utf-8")
+    start = src.index("ALL_SUPPORTED_LANGS = {")
+    langs = ast.literal_eval(src[src.index("{", start):src.index("}", start) + 1])
+    table = LanguageTable()
+    for code, name in langs.items():
+        assert table.match_filename(code) is not None, code
+        assert table.match_filename(code) == table.match_filename(name), (code, name)
+    assert len(langs) >= 100
+
+
 def test_parse_video_id():
     assert parse_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3") == "dQw4w9WgXcQ"
     assert parse_video_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"

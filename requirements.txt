@@ -1,3 +1,5 @@
 playwright>=1.51
 pillow>=10.0
+requests
+pyperclip
 pytest>=8.0
