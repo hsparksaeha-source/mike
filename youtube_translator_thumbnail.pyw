@@ -12,7 +12,7 @@ import sys
 
 # 같은 폴더의 썸네일 자동 등록 기능(thumb_agent) 불러오기
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from thumb_agent.folder import scan_folder
+from thumb_agent.folder import describe_scan, scan_folder
 from thumb_agent.tk_thumbs import ThumbnailRunner
 
 API_KEY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_translate_api_key.txt")
@@ -98,6 +98,7 @@ class YouTubeTranslatorApp:
         self.lang_widgets = {}
         self.thumb_paths = {}      # 언어코드 -> 썸네일 이미지 경로
         self.folder_thumbs = {}    # 썸네일 폴더에서 찾은 {스튜디오 언어코드: 경로}
+        self.last_scan = None
         self.thumbs = ThumbnailRunner(self.root, self.set_status)
 
         self.create_top_frame()
@@ -179,6 +180,7 @@ class YouTubeTranslatorApp:
             messagebox.showerror("폴더 오류", str(e))
             return False
         self.folder_thumbs = dict(scan.matched)
+        self.last_scan = scan
         for code in self.active_langs:
             path = self.folder_thumbs.get(self.thumbs.code_for(code))
             if path:
@@ -219,7 +221,16 @@ class YouTubeTranslatorApp:
             self.load_thumb_folder()
         thumbs = {c: p for c, p in self.thumb_paths.items() if c in self.active_langs}
         if not thumbs:
-            messagebox.showwarning("경고", "연결된 썸네일이 없습니다.\n썸네일 폴더를 선택하거나 언어 카드에서 썸네일을 선택해주세요.")
+            detail = ""
+            if self.last_scan is not None and self.entry_thumb_folder.get().strip():
+                detail = "\n\n" + describe_scan(self.last_scan)
+                extra = [c for c in self.last_scan.matched
+                         if c not in {self.thumbs.code_for(a) for a in self.active_langs}]
+                if extra:
+                    detail += ("\n아래 목록에 없는 언어의 이미지: "
+                               + ", ".join(self.thumbs.table.display_name(c) for c in extra)
+                               + "\n  → [새로운 언어 추가]로 해당 언어를 목록에 넣어 주세요.")
+            messagebox.showwarning("경고", "연결된 썸네일이 없습니다.\n썸네일 폴더를 선택하거나 언어 카드에서 썸네일을 선택해주세요." + detail)
             return
         if self.thumbs.needs_login():
             messagebox.showinfo("로그인 필요", "처음 사용하시면 먼저 [① 유튜브 로그인]을 해주세요.")

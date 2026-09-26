@@ -15,6 +15,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
+from .folder import ensure_uploadable
 from .languages import LANGUAGES, LanguageTable
 
 STUDIO_URL = "https://studio.youtube.com/video/{video_id}/translations"
@@ -172,6 +173,7 @@ class StudioThumbnailUploader:
             self._close_dialog()
             return "확인만 함 (--dry-run)"
 
+        image = ensure_uploadable(image, self.log_dir / "converted")
         self._choose_file(dialog, button, image)
         self._save(dialog)
         time.sleep(self.step_delay)

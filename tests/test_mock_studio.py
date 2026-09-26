@@ -39,6 +39,21 @@ def test_filename_matching(tmp_path):
     assert [p.name for p in scan.unmatched] == ["random.jpg"]
 
 
+def test_jfif_webp_are_recognised_and_converted(tmp_path):
+    from thumb_agent.folder import describe_scan, ensure_uploadable
+    table = LanguageTable()
+    Image.new("RGB", (1280, 720)).save(tmp_path / "gu.jfif", "JPEG")
+    Image.new("RGB", (1280, 720)).save(tmp_path / "그리스어.webp", "WEBP")
+    Image.new("RGB", (1280, 720)).save(tmp_path / "gu.jpg.jpg")  # 확장자 숨김 때문에 생기는 이름
+    (tmp_path / "memo.txt").write_text("x")
+    scan = scan_folder(tmp_path, table)
+    assert set(scan.matched) == {"gu", "el"}
+    assert [p.name for p in scan.other_files] == ["memo.txt"]
+    converted = ensure_uploadable(scan.matched["el"], tmp_path / "conv")
+    assert converted.suffix == ".jpg" and converted.exists()
+    assert "memo.txt" in describe_scan(scan)
+
+
 def test_translator_language_codes_and_names():
     """번역기(youtube_translator_maker.pyw)의 106개 언어 코드/이름이 모두 같은 언어로 인식되는지."""
     import ast
