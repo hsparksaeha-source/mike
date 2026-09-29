@@ -191,13 +191,27 @@ def default_output_folder(input_folder):
     return os.path.join(input_folder, "CapCut Drafts")
 
 
+def normalize_output_folder(path):
+    """출력 폴더로 채널 폴더(예: C:\\...\\채널B)를 넣어도 그 안의 "CapCut Drafts"에 저장되게 한다.
+    캡컷은 초안 위치로 지정한 폴더 안의 "CapCut Drafts" 폴더에서 프로젝트를 찾기 때문이다.
+    이미 "CapCut Drafts" 폴더를 넣었다면 그대로 쓴다."""
+    if not path:
+        return None
+    path = path.strip().strip('"').strip()
+    if not path:
+        return None
+    if os.path.basename(os.path.normpath(path)).lower() != "capcut drafts":
+        path = os.path.join(path, "CapCut Drafts")
+    return path
+
+
 def main():
     if len(sys.argv) < 2:
         print("사용법: python capcut_assemble_playlist.py <폴더> [출력 CapCut Drafts 폴더] [그룹경계 간격(초)=120]")
         sys.exit(1)
 
     input_folder = sys.argv[1]
-    output_drafts_folder = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].strip() else None
+    output_drafts_folder = normalize_output_folder(sys.argv[2]) if len(sys.argv) > 2 else None
     images_per_song = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_IMAGES_PER_SONG
     if not os.path.isdir(input_folder):
         print(f"!! 폴더를 찾을 수 없습니다: {input_folder}")
