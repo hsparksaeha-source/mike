@@ -191,18 +191,26 @@ def default_output_folder(input_folder):
     return os.path.join(input_folder, "CapCut Drafts")
 
 
-def normalize_output_folder(path):
-    """출력 폴더로 채널 폴더(예: C:\\...\\채널B)를 넣어도 그 안의 "CapCut Drafts"에 저장되게 한다.
-    캡컷은 초안 위치로 지정한 폴더 안의 "CapCut Drafts" 폴더에서 프로젝트를 찾기 때문이다.
-    이미 "CapCut Drafts" 폴더를 넣었다면 그대로 쓴다."""
+def normalize_output_folder(path, input_folder):
+    """출력 폴더를 캡컷이 읽는 "<앨범 폴더>\\CapCut Drafts" 형태로 맞춘다.
+
+    - "CapCut Drafts" 폴더를 넣으면 그대로 사용
+    - 앨범 폴더(입력 폴더와 이름이 같은 폴더)를 넣으면 그 안의 "CapCut Drafts"
+    - 그 밖의 폴더(채널 폴더)를 넣으면 그 아래에 입력 폴더와 같은 이름의 앨범 폴더를 만들고
+      그 안의 "CapCut Drafts"  (예: C:\\...\\채널B -> C:\\...\\채널B\\앨범명\\CapCut Drafts)
+    캡컷 초안 위치는 "CapCut Drafts" 바로 위 폴더(앨범 폴더)로 지정하면 된다."""
     if not path:
         return None
     path = path.strip().strip('"').strip()
     if not path:
         return None
-    if os.path.basename(os.path.normpath(path)).lower() != "capcut drafts":
-        path = os.path.join(path, "CapCut Drafts")
-    return path
+    name = os.path.basename(os.path.normpath(path))
+    if name.lower() == "capcut drafts":
+        return path
+    album = os.path.basename(os.path.normpath(input_folder.strip().strip('"')))
+    if album and name != album:
+        path = os.path.join(path, album)
+    return os.path.join(path, "CapCut Drafts")
 
 
 def main():
@@ -211,7 +219,7 @@ def main():
         sys.exit(1)
 
     input_folder = sys.argv[1]
-    output_drafts_folder = normalize_output_folder(sys.argv[2]) if len(sys.argv) > 2 else None
+    output_drafts_folder = normalize_output_folder(sys.argv[2], input_folder) if len(sys.argv) > 2 else None
     images_per_song = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_IMAGES_PER_SONG
     if not os.path.isdir(input_folder):
         print(f"!! 폴더를 찾을 수 없습니다: {input_folder}")
