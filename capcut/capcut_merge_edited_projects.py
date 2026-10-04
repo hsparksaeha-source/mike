@@ -4,11 +4,12 @@
 
 원본 노래/가사/이미지 파일을 다시 읽지 않는다. 이미 만들어진 각 곡의 draft_content.json을
 그대로 읽어서, 그 안에 있는 수정된 자막을 시간만 밀어서 이어붙인다.
-합치는 대상은 오디오, 이미지, 그리고 텍스트(자막) 트랙들이다.
-오디오/이미지는 이름("audio"/"이미지")으로 찾는다. 텍스트 트랙은 캡컷에서 프로젝트를
-열어 수정하면 트랙 이름("자막-한글"/"자막-영어")이 지워지는 경우가 있어서, 이름 대신
-"각 곡에서 몇 번째로 나오는 텍스트 트랙인지"(순서)로 짝짓는다 - 예: 모든 곡의 첫 번째
-텍스트 트랙끼리 합쳐 하나의 트랙이 되고, 두 번째 텍스트 트랙끼리 합쳐 또 다른 트랙이 된다.
+합치는 대상은 오디오, 이미지(비디오), 그리고 텍스트(자막) 트랙들이다.
+캡컷에서 프로젝트를 열어 수정하면 트랙 이름("audio"/"이미지"/"자막-한글" 등)이 지워지거나,
+이미지를 지우고 새로 넣으면 새 이미지가 다른 비디오 트랙에 들어가는 경우가 있다.
+그래서 모든 트랙을 이름 대신 "각 곡에서 그 종류의 몇 번째 트랙인지"(순서)로 짝짓는다
+- 예: 모든 곡의 첫 번째 텍스트 트랙끼리 합쳐 하나의 트랙이 되고, 두 번째 텍스트 트랙끼리
+합쳐 또 다른 트랙이 된다. 오디오·비디오도 같다. (세그먼트가 하나도 없는 빈 트랙은 세지 않는다.)
 (스티커처럼 텍스트가 아닌 장식은 합치지 않는다. 총괄 프로젝트를 새로 만든 뒤에 그 위에
  다시 작업하면 된다.)
 
@@ -113,7 +114,8 @@ def first_caption_text(src_materials, track):
 
 
 def merge_projects(project_dirs, drafts_folder, combined_name):
-    merged_segments = {"audio": [], "이미지": []}
+    audio_track_segments = []  # index = 그 곡에서 몇 번째 (비어 있지 않은) 오디오 트랙인지
+    video_track_segments = []  # index = 그 곡에서 몇 번째 (비어 있지 않은) 비디오(이미지) 트랙인지
     text_track_segments = []  # index = 그 곡에서 몇 번째 텍스트 트랙인지
     text_track_samples = []  # 트랙 이름을 짓기 위한 예시 텍스트(트랙 인덱스별로 하나씩)
     combined_materials = {}
@@ -156,14 +158,26 @@ def merge_projects(project_dirs, drafts_folder, combined_name):
                     seen_material_ids.add(mid)
                 dest_list.append(seg_copy)
 
+        def copy_by_order(track, track_lists, index):
+            while len(track_lists) <= index:
+                track_lists.append([])
+            copy_segments(track, track_lists[index])
+
         text_index = 0
+        audio_index = 0
+        video_index = 0
         for track in draft["tracks"]:
             ttype = track.get("type")
-            name = track.get("name")
-            if ttype == "audio" and name == "audio":
-                copy_segments(track, merged_segments["audio"])
-            elif ttype == "video" and name == "이미지":
-                copy_segments(track, merged_segments["이미지"])
+            if ttype in ("audio", "video") and not track.get("segments"):
+                continue  # 이미지를 전부 지워서 비어 버린 트랙 등은 세지 않는다
+            if ttype == "audio":
+                copy_by_order(track, audio_track_segments, audio_index)
+                audio_index += 1
+            elif ttype == "video":
+                # 캡컷에서 이미지를 바꾸면 트랙 이름("이미지")이 지워지거나 새 트랙에 들어가므로
+                # 이름이 아니라 순서로 합친다
+                copy_by_order(track, video_track_segments, video_index)
+                video_index += 1
             elif ttype == "text":
                 while len(text_track_segments) <= text_index:
                     text_track_segments.append([])
@@ -186,13 +200,19 @@ def merge_projects(project_dirs, drafts_folder, combined_name):
         else:
             text_track_names.append(f"자막{i}")
 
-    return merged_segments, text_track_segments, text_track_names, combined_materials, cursor, merged_count
+    merged_segments = {}
+    for i, segments in enumerate(audio_track_segments):
+        merged_segments[("audio", "audio" if i == 0 else f"audio{i + 1}")] = segments
+    for i, segments in enumerate(video_track_segments):
+        merged_segments[("video", "이미지" if i == 0 else f"이미지{i + 1}")] = segments
+    for name, segments in zip(text_track_names, text_track_segments):
+        merged_segments[("text", name)] = segments
+
+    return merged_segments, combined_materials, cursor, merged_count
 
 
-def build_combined_project(
-    merged_segments, text_track_segments, text_track_names, combined_materials,
-    total_duration, drafts_folder, combined_name,
-):
+def build_combined_project(merged_segments, combined_materials, total_duration, drafts_folder, combined_name):
+    """merged_segments: {(트랙 종류, 트랙 이름): [세그먼트...]}"""
     draft_folder = cc.DraftFolder(drafts_folder)
     try:
         script = draft_folder.create_draft(combined_name, 1920, 1080, fps=30, allow_replace=True)
@@ -203,27 +223,22 @@ def build_combined_project(
         )
         sys.exit(1)
 
-    if merged_segments["audio"]:
-        script.add_track(cc.TrackType.audio)
-    if merged_segments["이미지"]:
-        script.add_track(cc.TrackType.video, "이미지")
-    for track_name, segments in zip(text_track_names, text_track_segments):
+    track_types = {"audio": cc.TrackType.audio, "video": cc.TrackType.video, "text": cc.TrackType.text}
+    for (ttype, track_name), segments in merged_segments.items():
         if segments:
-            script.add_track(cc.TrackType.text, track_name)
+            script.add_track(track_types[ttype], track_name)
 
     script.save()
 
     draft_path = os.path.join(drafts_folder, combined_name, "draft_content.json")
     data = load_json(draft_path)
 
-    all_named_segments = dict(merged_segments)
-    all_named_segments.update(zip(text_track_names, text_track_segments))
-
     for track in data["tracks"]:
         name = track.get("name") or ("audio" if track.get("type") == "audio" else None)
-        track["segments"] = all_named_segments.get(name, [])
+        track["segments"] = merged_segments.get((track.get("type"), name), [])
 
-    for category in data["materials"]:
+    # 캡컷에서 직접 넣은 이미지는 새 템플릿에 없는 종류의 소재 정보를 쓸 수도 있으므로 빠짐없이 옮긴다
+    for category in set(data["materials"]) | set(combined_materials):
         data["materials"][category] = combined_materials.get(category, [])
 
     data["duration"] = total_duration
@@ -288,7 +303,7 @@ def main():
 
     print(f"총 {len(project_dirs)}곡을 '{combined_name}'(으)로 새로 합칩니다.\n")
 
-    merged_segments, text_track_segments, text_track_names, combined_materials, total_duration, merged_count = (
+    merged_segments, combined_materials, total_duration, merged_count = (
         merge_projects(project_dirs, drafts_folder, combined_name)
     )
 
@@ -296,10 +311,7 @@ def main():
         print("!! 합칠 수 있는 곡이 없습니다.")
         sys.exit(1)
 
-    build_combined_project(
-        merged_segments, text_track_segments, text_track_names, combined_materials,
-        total_duration, drafts_folder, combined_name,
-    )
+    build_combined_project(merged_segments, combined_materials, total_duration, drafts_folder, combined_name)
 
     print(
         f"\n[완료] 전곡 '{combined_name}': 총 길이 {total_duration / 1_000_000:.1f}초 "
