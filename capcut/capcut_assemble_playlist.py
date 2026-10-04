@@ -11,8 +11,11 @@
 [구조 B] 앨범 폴더 하나에 여러 곡이 섞여 있는 경우:
   <입력폴더>/노래/    (여러 곡의 "제목_mastered.wav"들과, 각 제목에 대응하는
                        "제목....lrc"(또는 .srt) 가사 파일들이 전부 한 폴더에 섞여 있음)
-  <입력폴더>/이미지/  (여러 곡의 이미지들이 전부 한 폴더에 섞여 있음 - 만든 날짜 오름차순으로
-                       정렬해서 정해진 장수(기본 15장)씩 순서대로 끊어 곡별로 배정)
+  <입력폴더>/이미지/  두 가지 방식 중 하나:
+     (1) 트랙 번호 폴더(추천): 이미지/1/, 이미지/2/, ... 이미지/10/ 처럼 번호 폴더마다 그 트랙의
+         이미지를 넣는다. N번 폴더 = N번째 곡(노래 만든 날짜 순). 파일 이름·날짜는 상관없다.
+     (2) 번호 폴더가 없으면 예전처럼 모든 이미지를 한 폴더에 섞어 두고, 만든 날짜 오름차순으로
+         정렬해서 정해진 장수(기본 15장)씩 순서대로 끊어 곡별로 배정
 
 어느 쪽이든 곡 폴더 하나(또는 앨범 폴더 하나) = 캡컷 초안 하나.
 곡이 2개 이상이면 전부 이어붙인 "전곡" 통합 프로젝트도 추가로 만듭니다.
@@ -75,6 +78,11 @@ def resolve_song_folder(song_folder):
     lyrics_path = os.path.join(song_folder, lyric_files[0])
     images = load_images(image_dir)
     if not images:
+        # 이미지를 "이미지\\1" 같은 번호 폴더에 넣어 둔 경우
+        track_folders = numbered_image_folders(image_dir)
+        if track_folders:
+            images = load_images(track_folders[min(track_folders)])
+    if not images:
         print(f"[건너뜀] {song_name}: 이미지가 없습니다.")
         return None
     return song_name, song_path, lyrics_path, images
@@ -107,6 +115,19 @@ def find_lyrics_for_title(song_dir, title):
     return None
 
 
+def numbered_image_folders(image_dir):
+    """이미지 폴더 안의 트랙 번호 폴더들 {번호: 폴더경로}. ("1", "01", "1번" 처럼 숫자로 시작하는 폴더)"""
+    folders = {}
+    if not os.path.isdir(image_dir):
+        return folders
+    for d in os.listdir(image_dir):
+        path = os.path.join(image_dir, d)
+        m = re.match(r"\s*(\d+)", d)
+        if os.path.isdir(path) and m:
+            folders.setdefault(int(m.group(1)), path)
+    return folders
+
+
 def resolve_flat_album(input_folder, images_per_song):
     """노래(mastered)는 만든 날짜 오름차순으로 정렬하고, 이미지도 만든 날짜 오름차순으로
     정렬해서 images_per_song장씩 묶어 같은 순번끼리 짝짓는다. 가사(.srt/.lrc)는 같은 제목의
@@ -117,6 +138,32 @@ def resolve_flat_album(input_folder, images_per_song):
 
     songs = list_sorted_by_ctime(song_dir, AUDIO_EXTS)
     mastered = [s for s in songs if "mastered" in os.path.basename(s).lower()]
+
+    track_folders = numbered_image_folders(image_dir)
+    if track_folders:
+        # 트랙 번호 폴더 방식: N번 폴더의 이미지를 N번째 곡에 그대로 배정 (날짜·이름 순서와 무관)
+        print(f"노래 {len(mastered)}개, 이미지 트랙 번호 폴더 {len(track_folders)}개 사용")
+        resolved_list = []
+        for i, wav_path in enumerate(mastered, 1):
+            title = strip_mastered_suffix(wav_path)
+            folder = track_folders.get(i)
+            if folder is None:
+                print(f"[건너뜀] {i}번 '{title}': 이미지\\{i} 폴더가 없습니다.")
+                continue
+            images = [p for p, _ in list_images_with_ctime_sorted(folder)]
+            if not images:
+                print(f"[건너뜀] {i}번 '{title}': 이미지\\{os.path.basename(folder)} 폴더에 이미지가 없습니다.")
+                continue
+            lyrics_path = find_lyrics_for_title(song_dir, title)
+            if not lyrics_path:
+                print(f"[건너뜀] '{title}': 가사 파일('{title}.lrc' 또는 '.srt')을 찾을 수 없습니다.")
+                continue
+            print(f"  {i}번 폴더({len(images)}장) → {title}")
+            resolved_list.append((title, wav_path, lyrics_path, images))
+        extra = sorted(n for n in track_folders if n > len(mastered))
+        if extra:
+            print(f"!! 주의: 노래보다 이미지 번호 폴더가 많습니다 (사용 안 함: {', '.join(map(str, extra))}번)")
+        return resolved_list
 
     images = [p for p, _ in list_images_with_ctime_sorted(image_dir)]
     image_chunks = [images[i:i + images_per_song] for i in range(0, len(images), images_per_song)]
