@@ -85,7 +85,8 @@ def group_songs_by_title(songs):
     '제목.wav'와 '제목 (1).wav' 두 개를 사용하고, (2)/(3) 등 나머지는 무시한다.
     둘 중 하나만 있으면 그 한 곡으로 주제를 만든다.
     (제목, [곡...], 주제번호) 리스트로 반환하며, 제목이 처음 등장한 순서를 유지한다.
-    주제번호는 건너뛴 제목까지 포함해 1부터 센 번호라서, 이미지 번호 폴더와 어긋나지 않는다."""
+    "(2)", "(3)" 처럼 쓰지 않는 파일만 있는 제목은 주제로 치지 않는다(번호도 차지하지 않음).
+    주제번호는 1부터 센 번호로, 이미지 번호 폴더(이미지\\N)와 짝짓는 데 쓴다."""
     by_title = {}
     order = []
     for path in songs:
@@ -98,12 +99,14 @@ def group_songs_by_title(songs):
         by_title[title][suffix] = path
 
     result = []
-    for number, title in enumerate(order, 1):
+    number = 0
+    for title in order:
         variants = by_title[title]
         songs = [p for p in (variants.get(""), variants.get("(1)")) if p]
         if not songs:
-            print(f"[건너뜀] {number}번 '{title}': '{title}.wav' 또는 '{title} (1).wav'가 있어야 합니다.")
+            print(f"[무시] '{title}': {sorted(variants)} 파일만 있어서 쓰지 않습니다.")
             continue
+        number += 1
         if len(songs) == 1:
             print(f"[안내] {number}번 '{title}': wav가 하나뿐이라 한 곡으로 만듭니다.")
         extras = [k for k in variants if k not in ("", "(1)")]
