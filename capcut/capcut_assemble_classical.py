@@ -3,7 +3,8 @@
 
 폴더 하나에 아래처럼 들어있다고 가정합니다:
   <입력폴더>/노래/    -- 여러 곡의 wav 파일들 (제목.wav, 제목 (1).wav 형태로 곡마다 2개씩,
-                         날짜순으로 나열하면 자연스럽게 곡 쌍이 만들어짐. mp3는 무시)
+                         날짜순으로 나열하면 자연스럽게 곡 쌍이 만들어짐. 하나만 있으면 한 곡으로
+                         주제를 만든다. mp3는 무시)
   <입력폴더>/이미지/  -- 여러 주제의 이미지들 (주제마다 장수가 다를 수 있음)
                          * 주제 번호 폴더(추천): 이미지/1/, 이미지/2/, ... 처럼 번호 폴더마다 그 주제의
                            이미지를 넣으면, N번 폴더 = N번째 주제(노래 만든 날짜 순)로 그대로 짝짓는다.
@@ -80,9 +81,11 @@ def base_title(filename):
 
 
 def group_songs_by_title(songs):
-    """같은 제목(뒤에 붙는 (N)만 다름)의 wav들을 묶는다. 각 제목에서는 항상
-    '제목.wav'와 '제목 (1).wav' 두 개만 사용하고, (2)/(3) 등 나머지는 무시한다.
-    (제목, [곡1, 곡2]) 리스트로 반환하며, 제목이 처음 등장한 순서를 유지한다."""
+    """같은 제목(뒤에 붙는 (N)만 다름)의 wav들을 묶는다. 각 제목에서는
+    '제목.wav'와 '제목 (1).wav' 두 개를 사용하고, (2)/(3) 등 나머지는 무시한다.
+    둘 중 하나만 있으면 그 한 곡으로 주제를 만든다.
+    (제목, [곡...], 주제번호) 리스트로 반환하며, 제목이 처음 등장한 순서를 유지한다.
+    주제번호는 건너뛴 제목까지 포함해 1부터 센 번호라서, 이미지 번호 폴더와 어긋나지 않는다."""
     by_title = {}
     order = []
     for path in songs:
@@ -95,17 +98,18 @@ def group_songs_by_title(songs):
         by_title[title][suffix] = path
 
     result = []
-    for title in order:
+    for number, title in enumerate(order, 1):
         variants = by_title[title]
-        song1 = variants.get("")
-        song2 = variants.get("(1)")
-        if not song1 or not song2:
-            print(f"[건너뜀] '{title}': '{title}.wav'와 '{title} (1).wav'가 모두 있어야 합니다.")
+        songs = [p for p in (variants.get(""), variants.get("(1)")) if p]
+        if not songs:
+            print(f"[건너뜀] {number}번 '{title}': '{title}.wav' 또는 '{title} (1).wav'가 있어야 합니다.")
             continue
+        if len(songs) == 1:
+            print(f"[안내] {number}번 '{title}': wav가 하나뿐이라 한 곡으로 만듭니다.")
         extras = [k for k in variants if k not in ("", "(1)")]
         if extras:
-            print(f"[안내] '{title}': {extras} 파일은 무시하고 기본 2개만 사용합니다.")
-        result.append((title, [song1, song2]))
+            print(f"[안내] '{title}': {extras} 파일은 무시하고 기본 파일만 사용합니다.")
+        result.append((title, songs, number))
     return result
 
 
@@ -156,8 +160,8 @@ def numbered_image_folders(image_dir):
 def pair_with_numbered_folders(song_groups, track_folders):
     """N번째 주제에 이미지/N 폴더의 이미지를 짝짓는다. 폴더가 없거나 비어 있는 주제는 뺀다."""
     paired_songs, paired_images = [], []
-    for i, group in enumerate(song_groups, 1):
-        title = group[0]
+    for group in song_groups:
+        title, _, i = group
         folder = track_folders.get(i)
         if folder is None:
             print(f"[건너뜀] {i}번 '{title}': 이미지\\{i} 폴더가 없습니다.")
@@ -169,7 +173,8 @@ def pair_with_numbered_folders(song_groups, track_folders):
         print(f"  {i}번 폴더({len(images)}장) → {title}")
         paired_songs.append(group)
         paired_images.append(images)
-    extra = sorted(n for n in track_folders if n > len(song_groups))
+    max_number = max((g[2] for g in song_groups), default=0)
+    extra = sorted(n for n in track_folders if n > max_number)
     if extra:
         print(f"!! 주의: 노래 주제보다 이미지 번호 폴더가 많습니다 (사용 안 함: {', '.join(map(str, extra))}번)")
     return paired_songs, paired_images
@@ -196,7 +201,7 @@ def theme_name_from_song(song_path):
     return base or "주제"
 
 
-def process_theme(theme_name, song1, song2, images, image_sec, draft_dir, position=None, total=None):
+def process_theme(theme_name, songs, images, image_sec, draft_dir, position=None, total=None):
     if position is not None:
         print(f"[{position}/{total}] {theme_name} 처리 시작...")
     else:
@@ -205,14 +210,14 @@ def process_theme(theme_name, song1, song2, images, image_sec, draft_dir, positi
     draft_folder = cc.DraftFolder(draft_dir)
     script = draft_folder.create_draft(theme_name, 1920, 1080, fps=30, allow_replace=True)
 
-    mat1 = cc.AudioMaterial(song1)
-    mat2 = cc.AudioMaterial(song2)
-    dur1, dur2 = mat1.duration, mat2.duration
-    total_us = dur1 + dur2
-
     script.add_track(cc.TrackType.audio)
-    script.add_segment(cc.AudioSegment(mat1, trange(0, dur1)))
-    script.add_segment(cc.AudioSegment(mat2, trange(dur1, dur2)))
+    durations = []
+    total_us = 0
+    for song in songs:
+        mat = cc.AudioMaterial(song)
+        script.add_segment(cc.AudioSegment(mat, trange(total_us, mat.duration)))
+        durations.append(mat.duration)
+        total_us += mat.duration
 
     script.add_track(cc.TrackType.video, "이미지")
     slot_us = int(image_sec * 1_000_000)
@@ -236,7 +241,8 @@ def process_theme(theme_name, song1, song2, images, image_sec, draft_dir, positi
     script.save()
     patch_transition_paths(os.path.join(draft_dir, theme_name, "draft_content.json"))
     print(
-        f"[완료] {theme_name}: 노래 2곡({dur1/1_000_000:.1f}s + {dur2/1_000_000:.1f}s), "
+        f"[완료] {theme_name}: 노래 {len(durations)}곡("
+        f"{' + '.join(f'{d/1_000_000:.1f}s' for d in durations)}), "
         f"이미지 {n_images}장을 {segment_count}번 배치"
     )
 
@@ -256,17 +262,16 @@ def build_combined_draft(song_groups, image_chunks, image_sec, draft_dir, combin
     cursor = 0
     n = min(len(song_groups), len(image_chunks))
     for i in range(n):
-        theme_name, (song1, song2) = song_groups[i]
+        theme_name, songs = song_groups[i][:2]
         images = image_chunks[i]
 
-        mat1 = cc.AudioMaterial(song1)
-        mat2 = cc.AudioMaterial(song2)
-        dur1, dur2 = mat1.duration, mat2.duration
+        theme_start = cursor
+        theme_end = cursor
+        for song in songs:
+            mat = cc.AudioMaterial(song)
+            script.add_segment(cc.AudioSegment(mat, trange(theme_end, mat.duration)))
+            theme_end += mat.duration
 
-        script.add_segment(cc.AudioSegment(mat1, trange(cursor, dur1)))
-        script.add_segment(cc.AudioSegment(mat2, trange(cursor + dur1, dur2)))
-
-        theme_end = cursor + dur1 + dur2
         idx = 0
         n_images = len(images)
         while cursor < theme_end:
@@ -278,7 +283,7 @@ def build_combined_draft(song_groups, image_chunks, image_sec, draft_dir, combin
             script.add_segment(seg, "이미지")
             cursor += dur
             idx += 1
-        print(f"  [{i+1}/{n}] {theme_name} 이어붙임 ({(dur1+dur2)/1_000_000:.1f}s)")
+        print(f"  [{i+1}/{n}] {theme_name} 이어붙임 ({(theme_end - theme_start)/1_000_000:.1f}s)")
 
     script.save()
     patch_transition_paths(os.path.join(draft_dir, combined_name, "draft_content.json"))
@@ -338,10 +343,10 @@ def main():
 
     success = 0
     for i in range(n_themes):
-        theme_name, (song1, song2) = song_groups[i]
+        theme_name, songs = song_groups[i][:2]
         theme_images = image_chunks[i]
         try:
-            process_theme(theme_name, song1, song2, theme_images, image_sec, draft_root, i + 1, n_themes)
+            process_theme(theme_name, songs, theme_images, image_sec, draft_root, i + 1, n_themes)
             success += 1
         except Exception as e:
             print(f"[실패] {theme_name}: {e}")
