@@ -5,6 +5,10 @@
   <입력폴더>/노래/    -- 여러 곡의 wav 파일들 (제목.wav, 제목 (1).wav 형태로 곡마다 2개씩,
                          날짜순으로 나열하면 자연스럽게 곡 쌍이 만들어짐. mp3는 무시)
   <입력폴더>/이미지/  -- 여러 주제의 이미지들 (주제마다 장수가 다를 수 있음)
+                         * 주제 번호 폴더(추천): 이미지/1/, 이미지/2/, ... 처럼 번호 폴더마다 그 주제의
+                           이미지를 넣으면, N번 폴더 = N번째 주제(노래 만든 날짜 순)로 그대로 짝짓는다.
+                           파일 이름·만든 날짜·시간 간격은 상관없다.
+                         * 번호 폴더가 없으면 아래처럼 시간 간격으로 자동 그룹 분리
 
 만든 날짜(다운로드/생성된 시각) 오름차순으로:
   - 노래 폴더의 wav 파일을 2개씩 묶어 "주제"의 노래 2곡으로 사용
@@ -136,6 +140,39 @@ def list_images_with_ctime_sorted(folder):
     ]
     items.sort(key=lambda t: t[1])
     return items
+
+
+def numbered_image_folders(image_dir):
+    """이미지 폴더 안의 주제 번호 폴더들 {번호: 폴더경로}. ("1", "01", "1번" 처럼 숫자로 시작하는 폴더)"""
+    folders = {}
+    for d in os.listdir(image_dir):
+        path = os.path.join(image_dir, d)
+        m = re.match(r"\s*(\d+)", d)
+        if os.path.isdir(path) and m:
+            folders.setdefault(int(m.group(1)), path)
+    return folders
+
+
+def pair_with_numbered_folders(song_groups, track_folders):
+    """N번째 주제에 이미지/N 폴더의 이미지를 짝짓는다. 폴더가 없거나 비어 있는 주제는 뺀다."""
+    paired_songs, paired_images = [], []
+    for i, group in enumerate(song_groups, 1):
+        title = group[0]
+        folder = track_folders.get(i)
+        if folder is None:
+            print(f"[건너뜀] {i}번 '{title}': 이미지\\{i} 폴더가 없습니다.")
+            continue
+        images = [p for p, _ in list_images_with_ctime_sorted(folder)]
+        if not images:
+            print(f"[건너뜀] {i}번 '{title}': 이미지\\{os.path.basename(folder)} 폴더에 이미지가 없습니다.")
+            continue
+        print(f"  {i}번 폴더({len(images)}장) → {title}")
+        paired_songs.append(group)
+        paired_images.append(images)
+    extra = sorted(n for n in track_folders if n > len(song_groups))
+    if extra:
+        print(f"!! 주의: 노래 주제보다 이미지 번호 폴더가 많습니다 (사용 안 함: {', '.join(map(str, extra))}번)")
+    return paired_songs, paired_images
 
 
 def default_output_folder(input_folder):
@@ -270,11 +307,20 @@ def main():
 
     songs = list_wav_sorted_by_ctime(song_dir)
     images_with_ctime = list_images_with_ctime_sorted(image_dir)
-    print(f"wav 파일 {len(songs)}개, 이미지 {len(images_with_ctime)}개 발견")
+    track_folders = numbered_image_folders(image_dir)
+    if track_folders:
+        print(f"wav 파일 {len(songs)}개 발견")
+    else:
+        print(f"wav 파일 {len(songs)}개, 이미지 {len(images_with_ctime)}개 발견")
 
     song_groups = group_songs_by_title(songs)  # [(제목, [곡1, 곡2]), ...]
-    image_chunks = cluster_images_by_time_gap(images_with_ctime, gap_threshold)
-    print(f"노래 제목(주제) {len(song_groups)}개, 이미지 그룹별 장수:", [len(c) for c in image_chunks])
+    if track_folders:
+        # 주제 번호 폴더 방식: N번 폴더 = N번째 주제 (시간 간격·날짜와 무관)
+        print(f"노래 제목(주제) {len(song_groups)}개, 이미지 주제 번호 폴더 {len(track_folders)}개 사용")
+        song_groups, image_chunks = pair_with_numbered_folders(song_groups, track_folders)
+    else:
+        image_chunks = cluster_images_by_time_gap(images_with_ctime, gap_threshold)
+        print(f"노래 제목(주제) {len(song_groups)}개, 이미지 그룹별 장수:", [len(c) for c in image_chunks])
 
     n_themes = min(len(song_groups), len(image_chunks))
     if n_themes == 0:
