@@ -13,8 +13,10 @@
 - wav가 하나뿐인 트랙은 1바퀴에만 나옵니다.
 - 곡별 프로젝트는 기존 클래식 버전과 같습니다 (트랙마다 제목.wav + 제목 (1).wav 1개).
 
+만들 것 고르기 (세 번째 값): 1 = 둘 다(기본), 2 = 전곡만, 3 = 곡별만
+
 사용법:
-  python capcut_assemble_classical_2pass.py <입력폴더> [출력폴더] [초당 이미지길이=5] [그룹경계 간격(초)=120]
+  python capcut_assemble_classical_2pass.py <입력폴더> [출력폴더] [만들것=1] [초당 이미지길이=5] [그룹경계 간격(초)=120]
 """
 
 import os
@@ -93,14 +95,20 @@ def main():
     if len(sys.argv) < 2:
         print(
             "사용법: python capcut_assemble_classical_2pass.py <입력폴더> "
-            "[출력 CapCut Drafts 폴더] [초당 이미지길이=5] [그룹경계 간격(초)=120]"
+            "[출력 CapCut Drafts 폴더] [만들것 1=둘다/2=전곡만/3=곡별만] [초당 이미지길이=5] [그룹경계 간격(초)=120]"
         )
         sys.exit(1)
 
     input_folder = sys.argv[1].strip().strip('"')
     output_drafts_folder = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].strip() else None
-    image_sec = float(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_IMAGE_SEC
-    gap_threshold = float(sys.argv[4]) if len(sys.argv) > 4 else DEFAULT_GAP_THRESHOLD_SEC
+    mode = sys.argv[3].strip() if len(sys.argv) > 3 and sys.argv[3].strip() else "1"
+    if mode not in ("1", "2", "3"):
+        print(f"[안내] 만들 것 '{mode}'을(를) 알 수 없어서 '1) 둘 다'로 진행합니다.")
+        mode = "1"
+    make_tracks = mode in ("1", "3")
+    make_combined = mode in ("1", "2")
+    image_sec = float(sys.argv[4]) if len(sys.argv) > 4 else DEFAULT_IMAGE_SEC
+    gap_threshold = float(sys.argv[5]) if len(sys.argv) > 5 else DEFAULT_GAP_THRESHOLD_SEC
 
     song_dir = os.path.join(input_folder, "노래")
     image_dir = os.path.join(input_folder, "이미지")
@@ -129,23 +137,26 @@ def main():
               f"개수가 다릅니다. 앞에서부터 {n}개만 짝지어 처리합니다.")
 
     draft_root = output_drafts_folder or default_output_folder(input_folder)
-    print(f"결과 저장 위치: {draft_root}\n")
+    print(f"결과 저장 위치: {draft_root}")
+    print("만들 것: " + {"1": "곡별 프로젝트 + 전곡", "2": "전곡만", "3": "곡별 프로젝트만"}[mode] + "\n")
 
-    success = 0
-    for i in range(n):
-        title, track_songs = song_groups[i][:2]
+    if make_tracks:
+        success = 0
+        for i in range(n):
+            title, track_songs = song_groups[i][:2]
+            try:
+                process_theme(title, track_songs, image_chunks[i], image_sec, draft_root, i + 1, n)
+                success += 1
+            except Exception as e:
+                print(f"[실패] {title}: {e}")
+        print(f"\n=== 곡별 프로젝트 완료 === 성공 {success} / 전체 {n}")
+
+    if make_combined:
+        combined_name = os.path.basename(input_folder.rstrip("\\/")) + " 전곡"
         try:
-            process_theme(title, track_songs, image_chunks[i], image_sec, draft_root, i + 1, n)
-            success += 1
+            build_two_pass_combined(song_groups, image_chunks, image_sec, draft_root, combined_name)
         except Exception as e:
-            print(f"[실패] {title}: {e}")
-    print(f"\n=== 곡별 프로젝트 완료 === 성공 {success} / 전체 {n}")
-
-    combined_name = os.path.basename(input_folder.rstrip("\\/")) + " 전곡"
-    try:
-        build_two_pass_combined(song_groups, image_chunks, image_sec, draft_root, combined_name)
-    except Exception as e:
-        print(f"[실패] 전곡 만들기: {e}")
+            print(f"[실패] 전곡 만들기: {e}")
 
 
 if __name__ == "__main__":

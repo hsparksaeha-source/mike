@@ -20,7 +20,14 @@ echo Output folder: CapCut Drafts folder CapCut is using (usually under Document
 echo Press Enter to use the default location.
 set /p OUTDIR=Output CapCut Drafts folder (optional):
 echo.
-python -u "%~dp0capcut_assemble_classical_2pass.py" "%PARENT%" "%OUTDIR%"
+echo What to make?
+echo   1) both (per-track projects + combined)
+echo   2) combined project only
+echo   3) per-track projects only
+set MODE=1
+set /p MODE=Choose 1, 2 or 3 (Enter = 1):
+echo.
+python -u "%~dp0capcut_assemble_classical_2pass.py" "%PARENT%" "%OUTDIR%" "%MODE%"
 echo.
 echo ================================================
 echo   Done. You can close this window.
