@@ -183,6 +183,28 @@ def pair_with_numbered_folders(song_groups, track_folders):
     return paired_songs, paired_images
 
 
+def normalize_output_folder(path, input_folder):
+    """출력 폴더를 캡컷이 읽는 "<앨범 폴더>\\CapCut Drafts" 형태로 맞춘다.
+
+    - "CapCut Drafts" 폴더를 넣으면 그대로 사용
+    - 앨범 폴더(입력 폴더와 이름이 같은 폴더)를 넣으면 그 안의 "CapCut Drafts"
+    - 그 밖의 폴더(채널 폴더)를 넣으면 그 아래에 입력 폴더와 같은 이름의 앨범 폴더를 만들고
+      그 안의 "CapCut Drafts"  (예: C:\\...\\Claude Classic Music -> ...\\Claude Classic Music\\앨범명\\CapCut Drafts)
+    비어 있으면 None (기본 위치 사용)."""
+    if not path:
+        return None
+    path = path.strip().strip('"').strip()
+    if not path:
+        return None
+    name = os.path.basename(os.path.normpath(path))
+    if name.lower() == "capcut drafts":
+        return path
+    album = os.path.basename(os.path.normpath(input_folder.strip().strip('"')))
+    if album and name != album:
+        path = os.path.join(path, album)
+    return os.path.join(path, "CapCut Drafts")
+
+
 def default_output_folder(input_folder):
     """출력 폴더를 안 넘기면, F드라이브 등 외장하드의 원본 폴더 대신 캡컷이 실제로
     읽는 Documents 쪽 폴더를 자동으로 찾아서 사용한다.
@@ -301,8 +323,8 @@ def main():
         )
         sys.exit(1)
 
-    input_folder = sys.argv[1]
-    output_drafts_folder = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].strip() else None
+    input_folder = sys.argv[1].strip().strip('"')
+    output_drafts_folder = normalize_output_folder(sys.argv[2], input_folder) if len(sys.argv) > 2 else None
     image_sec = float(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_IMAGE_SEC
     gap_threshold = float(sys.argv[4]) if len(sys.argv) > 4 else DEFAULT_GAP_THRESHOLD_SEC
 

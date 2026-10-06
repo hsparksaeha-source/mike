@@ -35,6 +35,7 @@ from capcut_assemble_classical import (
     group_songs_by_title,
     list_images_with_ctime_sorted,
     list_wav_sorted_by_ctime,
+    normalize_output_folder,
     numbered_image_folders,
     pair_with_numbered_folders,
     patch_transition_paths,
@@ -100,7 +101,7 @@ def main():
         sys.exit(1)
 
     input_folder = sys.argv[1].strip().strip('"')
-    output_drafts_folder = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].strip() else None
+    output_drafts_folder = normalize_output_folder(sys.argv[2], input_folder) if len(sys.argv) > 2 else None
     mode = sys.argv[3].strip() if len(sys.argv) > 3 and sys.argv[3].strip() else "1"
     if mode not in ("1", "2", "3"):
         print(f"[안내] 만들 것 '{mode}'을(를) 알 수 없어서 '1) 둘 다'로 진행합니다.")
