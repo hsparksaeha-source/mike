@@ -29,6 +29,7 @@ import re
 import sys
 
 import pycapcut as cc
+from pycapcut.exceptions import SegmentOverlap
 
 from capcut_assemble import add_song_to_script, build_pop_draft, load_images
 from capcut_assemble_classical import list_images_with_ctime_sorted
@@ -200,6 +201,29 @@ def process_song(resolved, draft_dir):
     return build_pop_draft(song_path, lyrics_path, None, song_name, draft_dir, images=images)
 
 
+def allow_subtitle_overflow(script):
+    """가사 줄이 길어서 자막이 같은 트랙의 다른 자막과 겹치면(예: 마지막 줄이 곡 끝까지 이어짐)
+    멈추지 않고, 비어 있는 다른 자막 트랙에 넣는다. 없으면 자막 트랙을 하나 더 만든다.
+    (자막 말고 노래·이미지가 겹치면 예전처럼 오류로 알린다)"""
+    original_add = script.add_segment
+
+    def add_segment(segment, track_name=None):
+        try:
+            return original_add(segment, track_name)
+        except SegmentOverlap:
+            if not isinstance(segment, cc.TextSegment):
+                raise
+        text_tracks = [t for t in script.tracks.values() if t.track_type == cc.TrackType.text]
+        for track in text_tracks:
+            if not any(seg.overlaps(segment) for seg in track.segments):
+                return original_add(segment, track.name)
+        name = f"자막_추가{len(text_tracks) + 1}"
+        script.add_track(cc.TrackType.text, name, relative_index=len(text_tracks) + 1)
+        return original_add(segment, name)
+
+    script.add_segment = add_segment
+
+
 def build_combined_draft(resolved_list, draft_dir, combined_name):
     print(f"\n[전곡] '{combined_name}' 만드는 중...")
     os.makedirs(draft_dir, exist_ok=True)
@@ -209,6 +233,8 @@ def build_combined_draft(resolved_list, draft_dir, combined_name):
     script.add_track(cc.TrackType.audio)
     script.add_track(cc.TrackType.video, "이미지")
     # 자막 트랙은 add_song_to_script 안에서 필요한 만큼 동적으로 생성됨
+
+    allow_subtitle_overflow(script)
 
     cursor = 0
     text_tracks_created = set()
