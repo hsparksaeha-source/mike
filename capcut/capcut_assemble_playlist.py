@@ -16,6 +16,8 @@
          이미지를 넣는다. N번 폴더 = N번째 곡(노래 만든 날짜 순). 파일 이름·날짜는 상관없다.
      (2) 번호 폴더가 없으면 예전처럼 모든 이미지를 한 폴더에 섞어 두고, 만든 날짜 오름차순으로
          정렬해서 정해진 장수(기본 15장)씩 순서대로 끊어 곡별로 배정
+     사진 대신 동영상(mp4 등)을 넣거나 사진과 섞어도 된다. 자막이 바뀔 때마다 다음 사진·영상으로
+     바뀌고, 동영상은 소리를 끄고 최대 10초씩, 다시 돌 때는 다음 장면부터 이어서 쓴다.
 
 어느 쪽이든 곡 폴더 하나(또는 앨범 폴더 하나) = 캡컷 초안 하나.
 곡이 2개 이상이면 전부 이어붙인 "전곡" 통합 프로젝트도 추가로 만듭니다.
@@ -32,7 +34,7 @@ import pycapcut as cc
 from pycapcut.exceptions import SegmentOverlap
 
 from capcut_assemble import add_song_to_script, build_pop_draft, load_images
-from capcut_assemble_classical import list_images_with_ctime_sorted
+from capcut_assemble_classical import describe_media, list_media_with_ctime_sorted
 
 AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".flac", ".aac")
 DEFAULT_IMAGES_PER_SONG = 15
@@ -151,22 +153,22 @@ def resolve_flat_album(input_folder, images_per_song):
             if folder is None:
                 print(f"[건너뜀] {i}번 '{title}': 이미지\\{i} 폴더가 없습니다.")
                 continue
-            images = [p for p, _ in list_images_with_ctime_sorted(folder)]
+            images = [p for p, _ in list_media_with_ctime_sorted(folder)]
             if not images:
-                print(f"[건너뜀] {i}번 '{title}': 이미지\\{os.path.basename(folder)} 폴더에 이미지가 없습니다.")
+                print(f"[건너뜀] {i}번 '{title}': 이미지\\{os.path.basename(folder)} 폴더에 사진·영상이 없습니다.")
                 continue
             lyrics_path = find_lyrics_for_title(song_dir, title)
             if not lyrics_path:
                 print(f"[건너뜀] '{title}': 가사 파일('{title}.lrc' 또는 '.srt')을 찾을 수 없습니다.")
                 continue
-            print(f"  {i}번 폴더({len(images)}장) → {title}")
+            print(f"  {i}번 폴더({describe_media(images)}) → {title}")
             resolved_list.append((title, wav_path, lyrics_path, images))
         extra = sorted(n for n in track_folders if n > len(mastered))
         if extra:
             print(f"!! 주의: 노래보다 이미지 번호 폴더가 많습니다 (사용 안 함: {', '.join(map(str, extra))}번)")
         return resolved_list
 
-    images = [p for p, _ in list_images_with_ctime_sorted(image_dir)]
+    images = [p for p, _ in list_media_with_ctime_sorted(image_dir)]
     image_chunks = [images[i:i + images_per_song] for i in range(0, len(images), images_per_song)]
 
     n = min(len(mastered), len(image_chunks))

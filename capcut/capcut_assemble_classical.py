@@ -191,8 +191,9 @@ class MediaFiller:
     - 동영상 원래 소리는 끈다.
     한 주제(트랙) 동안 같은 MediaFiller를 계속 쓰면, 여러 곡에 걸쳐서도 이어서 보여 준다."""
 
-    def __init__(self, media, image_sec, video_sec=DEFAULT_VIDEO_SEC, fit_us=None):
+    def __init__(self, media, image_sec, video_sec=DEFAULT_VIDEO_SEC, fit_us=None, transition=TRANSITION):
         self.media = list(media)
+        self.transition = transition
         self.image_slot = int(image_sec * 1_000_000)
         self.video_slot = int(video_sec * 1_000_000)
         self.min_piece = int(MIN_VIDEO_PIECE_SEC * 1_000_000)
@@ -262,8 +263,8 @@ class MediaFiller:
                     dur = remaining  # 끝에 0.5초도 안 되는 자투리가 남지 않게
                 seg = cc.VideoSegment(path, trange(cursor, dur))
                 with_transition = dur == self.image_slot
-            if TRANSITION is not None and with_transition and cursor + dur < end:
-                seg.add_transition(TRANSITION, duration=TRANSITION_DUR_US)
+            if self.transition is not None and with_transition and cursor + dur < end:
+                seg.add_transition(self.transition, duration=TRANSITION_DUR_US)
             script.add_segment(seg, track_name)
             cursor += dur
             self.placed += 1

@@ -22,6 +22,8 @@ import sys
 import pycapcut as cc
 from pycapcut import trange
 
+from capcut_assemble_classical import MEDIA_EXTS, MediaFiller, describe_media
+
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
 TIME_RE = re.compile(
@@ -131,10 +133,11 @@ def parse_captions_tracks(path, total_sec):
 
 
 def load_images(folder):
+    """폴더의 사진과 동영상(mp4 등)."""
     files = [
         os.path.join(folder, f)
         for f in os.listdir(folder)
-        if f.lower().endswith(IMAGE_EXTS)
+        if f.lower().endswith(MEDIA_EXTS)
     ]
     files.sort()
     return files
@@ -182,14 +185,14 @@ def add_song_to_script(script, song_path, srt_path, images_dir, cursor=0, images
         for start, dur, text in (tracks[0][2] if tracks else [])
     ]
     slots = build_image_slots(ref_captions_us, total_us)
-    n_images = len(images)
-    for i, (slot_start, slot_dur) in enumerate(slots):
+    # 자막 구간마다 다음 사진(또는 동영상)으로 바뀐다. 사진은 그 구간 전체에 나오고,
+    # 동영상은 소리를 끄고 최대 10초씩 - 구간이 더 길면 다음 사진·영상이 이어서 나온다.
+    # 다시 돌 때 동영상은 지난번 다음 장면부터 이어서 나온다.
+    filler = MediaFiller(images, image_sec=100_000, transition=None)
+    for slot_start, slot_dur in slots:
         if slot_dur <= 0:
             continue
-        img = images[i % n_images]
-        script.add_segment(
-            cc.VideoSegment(img, trange(cursor + slot_start, slot_dur)), "이미지"
-        )
+        filler.fill(script, cursor + slot_start, cursor + slot_start + slot_dur)
 
     total_caption_count = 0
     for track_name, is_ko, caps in tracks:
@@ -212,7 +215,7 @@ def add_song_to_script(script, song_path, srt_path, images_dir, cursor=0, images
             total_caption_count += 1
 
     print(
-        f"  자막 {total_caption_count}개({len(tracks)}개 트랙), 이미지슬롯 {len(slots)}개(보유 이미지 {n_images}장 순환), "
+        f"  자막 {total_caption_count}개({len(tracks)}개 트랙), 이미지슬롯 {len(slots)}개(보유 {describe_media(images)} 순환), "
         f"노래 길이 {total_us/1_000_000:.1f}초"
     )
     return cursor + total_us
