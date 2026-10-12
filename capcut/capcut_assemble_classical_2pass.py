@@ -28,12 +28,11 @@ from pycapcut import trange
 from capcut_assemble_classical import (
     DEFAULT_GAP_THRESHOLD_SEC,
     DEFAULT_IMAGE_SEC,
-    TRANSITION,
-    TRANSITION_DUR_US,
+    MediaFiller,
     cluster_images_by_time_gap,
     default_output_folder,
     group_songs_by_title,
-    list_images_with_ctime_sorted,
+    list_media_with_ctime_sorted,
     list_wav_sorted_by_ctime,
     normalize_output_folder,
     numbered_image_folders,
@@ -43,22 +42,12 @@ from capcut_assemble_classical import (
 )
 
 
-def add_song_with_images(script, song, images, start_idx, cursor, slot_us):
-    """곡 하나를 cursor 위치에 놓고, 그 길이만큼 이미지를 start_idx번째부터 돌아가며 채운다.
-    (다음 커서 위치, 다음 이미지 번호)를 돌려준다."""
+def add_song_with_images(script, song, filler, cursor):
+    """곡 하나를 cursor 위치에 놓고, 그 길이만큼 트랙의 사진·영상을 이어서 채운다. 다음 커서 위치를 돌려준다.
+    (filler는 트랙마다 하나라서, 2바퀴째에는 1바퀴에서 보여 준 다음 사진·장면부터 이어진다)"""
     mat = cc.AudioMaterial(song)
     script.add_segment(cc.AudioSegment(mat, trange(cursor, mat.duration)))
-    song_end = cursor + mat.duration
-    idx = start_idx
-    while cursor < song_end:
-        dur = min(slot_us, song_end - cursor)
-        seg = cc.VideoSegment(images[idx % len(images)], trange(cursor, dur))
-        if TRANSITION is not None and dur == slot_us and (cursor + slot_us) < song_end:
-            seg.add_transition(TRANSITION, duration=TRANSITION_DUR_US)
-        script.add_segment(seg, "이미지")
-        cursor += dur
-        idx += 1
-    return cursor, idx
+    return filler.fill(script, cursor, cursor + mat.duration)
 
 
 def build_two_pass_combined(song_groups, image_chunks, image_sec, draft_dir, combined_name):
@@ -68,10 +57,12 @@ def build_two_pass_combined(song_groups, image_chunks, image_sec, draft_dir, com
     script = draft_folder.create_draft(combined_name, 1920, 1080, fps=30, allow_replace=True)
     script.add_track(cc.TrackType.audio)
     script.add_track(cc.TrackType.video, "이미지")
-    slot_us = int(image_sec * 1_000_000)
-
     n = min(len(song_groups), len(image_chunks))
-    next_image = [0] * n  # 트랙별로 다음에 보여 줄 이미지 번호 (2바퀴째에 이어서 보여 주기 위해)
+    # 트랙마다 하나씩: 2바퀴째에 1바퀴에서 보여 준 다음 사진·장면부터 이어서 보여 주기 위해
+    fillers = []
+    for i in range(n):
+        track_us = sum(cc.AudioMaterial(song).duration for song in song_groups[i][1])
+        fillers.append(MediaFiller(image_chunks[i], image_sec, fit_us=track_us))
     cursor = 0
     count = 0
     for round_no in (1, 2):
@@ -82,8 +73,7 @@ def build_two_pass_combined(song_groups, image_chunks, image_sec, draft_dir, com
                 continue  # wav가 하나뿐인 트랙은 2바퀴째에 없음
             song = songs[round_no - 1]
             start = cursor
-            cursor, next_image[i] = add_song_with_images(
-                script, song, image_chunks[i], next_image[i], cursor, slot_us)
+            cursor = add_song_with_images(script, song, fillers[i], cursor)
             count += 1
             print(f"  [{count}] {os.path.basename(song)} ({(cursor - start) / 1_000_000:.1f}s)")
 
@@ -126,7 +116,7 @@ def main():
         print(f"노래 트랙 {len(song_groups)}개, 이미지 번호 폴더 {len(track_folders)}개 사용")
         song_groups, image_chunks = pair_with_numbered_folders(song_groups, track_folders)
     else:
-        image_chunks = cluster_images_by_time_gap(list_images_with_ctime_sorted(image_dir), gap_threshold)
+        image_chunks = cluster_images_by_time_gap(list_media_with_ctime_sorted(image_dir), gap_threshold)
         print(f"노래 트랙 {len(song_groups)}개, 이미지 그룹별 장수:", [len(c) for c in image_chunks])
 
     n = min(len(song_groups), len(image_chunks))

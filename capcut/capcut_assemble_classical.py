@@ -10,6 +10,9 @@
                            이미지를 넣으면, N번 폴더 = N번째 주제(노래 만든 날짜 순)로 그대로 짝짓는다.
                            파일 이름·만든 날짜·시간 간격은 상관없다.
                          * 번호 폴더가 없으면 아래처럼 시간 간격으로 자동 그룹 분리
+                         * 사진 대신 동영상(mp4 등)을 넣거나 사진과 섞어도 된다. 동영상은 10초씩
+                           (짧은 영상은 원래 길이만큼) 소리를 끄고 넣으며, 다시 돌 때는 다음 장면부터
+                           이어서 쓴다. 영상이 노래보다 길면 조각 길이를 줄여 모든 영상이 나오게 한다.
 
 만든 날짜(다운로드/생성된 시각) 오름차순으로:
   - 노래 폴더의 wav 파일을 2개씩 묶어 "주제"의 노래 2곡으로 사용
@@ -38,7 +41,11 @@ from pycapcut import trange
 from pycapcut.metadata.effect_meta import TransitionMeta
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".wmv")
+MEDIA_EXTS = IMAGE_EXTS + VIDEO_EXTS
 DEFAULT_IMAGE_SEC = 5
+DEFAULT_VIDEO_SEC = 10   # 동영상은 10초씩 잘라서 사용
+MIN_VIDEO_PIECE_SEC = 3  # 길이 자동 맞춤으로 줄일 때도 이보다 짧게는 자르지 않음
 DEFAULT_GAP_THRESHOLD_SEC = 120  # 이 간격(초)보다 크게 벌어지면 새 주제로 판단
 
 # "사선 페이드" - pycapcut 기본 목록에 없어서, 실제 캡컷에서 추출한 값으로 직접 등록
@@ -149,6 +156,120 @@ def list_images_with_ctime_sorted(folder):
     return items
 
 
+def list_media_with_ctime_sorted(folder):
+    """사진과 동영상을 함께 만든 날짜 순으로."""
+    items = [
+        (os.path.join(folder, f), os.path.getctime(os.path.join(folder, f)))
+        for f in os.listdir(folder)
+        if f.lower().endswith(MEDIA_EXTS)
+    ]
+    items.sort(key=lambda t: t[1])
+    return items
+
+
+def is_video(path):
+    return path.lower().endswith(VIDEO_EXTS)
+
+
+def describe_media(media):
+    videos = sum(1 for p in media if is_video(p))
+    photos = len(media) - videos
+    if videos and photos:
+        return f"사진 {photos}장 + 영상 {videos}개"
+    if videos:
+        return f"영상 {videos}개"
+    return f"{photos}장"
+
+
+class MediaFiller:
+    """사진·동영상 목록으로 화면 트랙을 채운다.
+
+    - 사진은 image_sec초씩, 동영상은 video_sec초씩 (짧은 영상은 원래 길이만큼) 순서대로 놓는다.
+    - 목록을 다 쓰고도 노래가 남으면 처음으로 돌아가는데, 동영상은 지난번에 쓴 다음 장면부터 이어서
+      쓴다. 영상 끝까지 다 썼으면 다시 처음 장면부터.
+    - fit_us(채울 전체 길이)를 주면, 영상이 노래보다 길 때 조각 길이를 줄여서 모든 영상이 한 번씩 나오게 한다.
+    - 동영상 원래 소리는 끈다.
+    한 주제(트랙) 동안 같은 MediaFiller를 계속 쓰면, 여러 곡에 걸쳐서도 이어서 보여 준다."""
+
+    def __init__(self, media, image_sec, video_sec=DEFAULT_VIDEO_SEC, fit_us=None):
+        self.media = list(media)
+        self.image_slot = int(image_sec * 1_000_000)
+        self.video_slot = int(video_sec * 1_000_000)
+        self.min_piece = int(MIN_VIDEO_PIECE_SEC * 1_000_000)
+        self.idx = 0
+        self.offsets = {}
+        self._materials = {}
+        self.placed = 0
+        if fit_us:
+            self._fit(fit_us)
+
+    def _material(self, path):
+        if path not in self._materials:
+            self._materials[path] = cc.VideoMaterial(path)
+        return self._materials[path]
+
+    def _fit(self, total_us):
+        videos = [p for p in self.media if is_video(p)]
+        if not videos:
+            return
+        photos_us = (len(self.media) - len(videos)) * self.image_slot
+        durations = [self._material(v).duration for v in videos]
+
+        def one_round(slot):
+            return photos_us + sum(min(slot, d) for d in durations)
+
+        if one_round(self.video_slot) <= total_us:
+            return
+        lo, hi = self.min_piece, self.video_slot
+        if one_round(lo) > total_us:
+            best = lo
+        else:
+            while hi - lo > 10_000:  # 0.01초 단위까지
+                mid = (lo + hi) // 2
+                if one_round(mid) <= total_us:
+                    lo = mid
+                else:
+                    hi = mid
+            best = lo
+        print(f"  (영상이 노래보다 길어서 영상 조각 길이를 {self.video_slot / 1_000_000:.0f}초 → "
+              f"{best / 1_000_000:.1f}초로 줄여 모든 영상이 나오게 합니다)")
+        self.video_slot = best
+
+    def fill(self, script, cursor, end, track_name="이미지"):
+        """cursor부터 end까지 채우고 끝난 위치를 돌려준다."""
+        n = len(self.media)
+        while cursor < end:
+            path = self.media[self.idx % n]
+            self.idx += 1
+            remaining = end - cursor
+            if is_video(path):
+                mat = self._material(path)
+                if mat.duration <= 0:
+                    continue
+                offset = self.offsets.get(path, 0)
+                left = mat.duration - offset
+                if left <= 0 or (offset > 0 and left < self.min_piece):
+                    offset, left = 0, mat.duration
+                dur = min(self.video_slot, left, remaining)
+                if 0 < remaining - dur < 500_000 and left >= remaining:
+                    dur = remaining  # 끝에 0.5초도 안 되는 자투리가 남지 않게
+                seg = cc.VideoSegment(mat, trange(cursor, dur), source_timerange=trange(offset, dur), volume=0.0)
+                self.offsets[path] = offset + dur
+                with_transition = dur >= self.min_piece
+            else:
+                dur = min(self.image_slot, remaining)
+                if 0 < remaining - dur < 500_000:
+                    dur = remaining  # 끝에 0.5초도 안 되는 자투리가 남지 않게
+                seg = cc.VideoSegment(path, trange(cursor, dur))
+                with_transition = dur == self.image_slot
+            if TRANSITION is not None and with_transition and cursor + dur < end:
+                seg.add_transition(TRANSITION, duration=TRANSITION_DUR_US)
+            script.add_segment(seg, track_name)
+            cursor += dur
+            self.placed += 1
+        return cursor
+
+
 def numbered_image_folders(image_dir):
     """이미지 폴더 안의 주제 번호 폴더들 {번호: 폴더경로}. ("1", "01", "1번" 처럼 숫자로 시작하는 폴더)"""
     folders = {}
@@ -169,11 +290,11 @@ def pair_with_numbered_folders(song_groups, track_folders):
         if folder is None:
             print(f"[건너뜀] {i}번 '{title}': 이미지\\{i} 폴더가 없습니다.")
             continue
-        images = [p for p, _ in list_images_with_ctime_sorted(folder)]
+        images = [p for p, _ in list_media_with_ctime_sorted(folder)]
         if not images:
-            print(f"[건너뜀] {i}번 '{title}': 이미지\\{os.path.basename(folder)} 폴더에 이미지가 없습니다.")
+            print(f"[건너뜀] {i}번 '{title}': 이미지\\{os.path.basename(folder)} 폴더에 사진·영상이 없습니다.")
             continue
-        print(f"  {i}번 폴더({len(images)}장) → {title}")
+        print(f"  {i}번 폴더({describe_media(images)}) → {title}")
         paired_songs.append(group)
         paired_images.append(images)
     max_number = max((g[2] for g in song_groups), default=0)
@@ -245,30 +366,15 @@ def process_theme(theme_name, songs, images, image_sec, draft_dir, position=None
         total_us += mat.duration
 
     script.add_track(cc.TrackType.video, "이미지")
-    slot_us = int(image_sec * 1_000_000)
-    transition = TRANSITION
-
-    cursor = 0
-    idx = 0
-    n_images = len(images)
-    segment_count = 0
-    while cursor < total_us:
-        img = images[idx % n_images]
-        dur = min(slot_us, total_us - cursor)
-        seg = cc.VideoSegment(img, trange(cursor, dur))
-        if transition is not None and dur == slot_us and (cursor + slot_us) < total_us:
-            seg.add_transition(transition, duration=TRANSITION_DUR_US)
-        script.add_segment(seg, "이미지")
-        cursor += dur
-        idx += 1
-        segment_count += 1
+    filler = MediaFiller(images, image_sec, fit_us=total_us)
+    filler.fill(script, 0, total_us)
 
     script.save()
     patch_transition_paths(os.path.join(draft_dir, theme_name, "draft_content.json"))
     print(
         f"[완료] {theme_name}: 노래 {len(durations)}곡("
         f"{' + '.join(f'{d/1_000_000:.1f}s' for d in durations)}), "
-        f"이미지 {n_images}장을 {segment_count}번 배치"
+        f"{describe_media(images)}을(를) {filler.placed}번 배치"
     )
 
 
@@ -281,8 +387,6 @@ def build_combined_draft(song_groups, image_chunks, image_sec, draft_dir, combin
 
     script.add_track(cc.TrackType.audio)
     script.add_track(cc.TrackType.video, "이미지")
-    slot_us = int(image_sec * 1_000_000)
-    transition = TRANSITION
 
     cursor = 0
     n = min(len(song_groups), len(image_chunks))
@@ -297,17 +401,8 @@ def build_combined_draft(song_groups, image_chunks, image_sec, draft_dir, combin
             script.add_segment(cc.AudioSegment(mat, trange(theme_end, mat.duration)))
             theme_end += mat.duration
 
-        idx = 0
-        n_images = len(images)
-        while cursor < theme_end:
-            img = images[idx % n_images]
-            dur = min(slot_us, theme_end - cursor)
-            seg = cc.VideoSegment(img, trange(cursor, dur))
-            if transition is not None and dur == slot_us and (cursor + slot_us) < theme_end:
-                seg.add_transition(transition, duration=TRANSITION_DUR_US)
-            script.add_segment(seg, "이미지")
-            cursor += dur
-            idx += 1
+        filler = MediaFiller(images, image_sec, fit_us=theme_end - theme_start)
+        cursor = filler.fill(script, cursor, theme_end)
         print(f"  [{i+1}/{n}] {theme_name} 이어붙임 ({(theme_end - theme_start)/1_000_000:.1f}s)")
 
     script.save()
@@ -336,7 +431,7 @@ def main():
         sys.exit(1)
 
     songs = list_wav_sorted_by_ctime(song_dir)
-    images_with_ctime = list_images_with_ctime_sorted(image_dir)
+    images_with_ctime = list_media_with_ctime_sorted(image_dir)
     track_folders = numbered_image_folders(image_dir)
     if track_folders:
         print(f"wav 파일 {len(songs)}개 발견")
