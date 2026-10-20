@@ -11,8 +11,10 @@ v2 (원본 youtube_auto_translate.py 와 하는 일은 같고, 아래 두 가지
   - 크롬을 '자동 조종 모드'로 열지 않고 평소처럼 켠 다음 연결한다.
     (구글이 자동 조종 크롬에서 "로그인할 수 없음 - 브라우저 또는 앱이 안전하지 않을 수 있습니다"로 막기 때문)
     작업이 끝나도 크롬 창은 닫지 않고 남겨 둔다 (다음 실행 때 그대로 다시 씀).
-  - 중간에 구글 '본인 인증' 창이 뜨면 멈추지 않고, 크롬에서 인증을 마칠 때까지 기다렸다가
-    그 언어부터 다시 이어서 한다.
+  - 중간에 구글 '본인 인증' 창(또는 '오류가 발생했습니다' 화면)이 뜨면, 프로그램이 크롬에서 완전히
+    손을 뗀다(연결을 끊음). 크롬이 평소 크롬과 똑같은 상태에서 사람이 인증을 마치고 까만 창에서
+    Enter 를 누르면, 다시 연결해서 그 언어부터 이어서 한다.
+    (프로그램이 연결된 채로 인증하면 구글이 인증을 받아 주지 않고 '오류가 발생했습니다'가 나올 수 있음)
 """
 
 import csv
@@ -34,7 +36,8 @@ MAPPING_PATH = Path(r"C:\Users\lg\Desktop\yt_automation\lang_mapping.json")
 TITLE_MAX_LEN = 100
 DEBUG_PORT = 9223  # 썸네일 프로그램(9222)과 겹치지 않게
 VERIFY_TIMEOUT_SEC = 900  # 본인 인증을 기다리는 최대 시간 (15분)
-VERIFY_TEXTS = ["본인 인증", "본인임을 확인", "Verify it's you", "Verify it’s you", "Confirm it's you"]
+VERIFY_TEXTS = ["본인 인증", "본인임을 확인", "Verify it's you", "Verify it’s you", "Confirm it's you",
+                "오류가 발생했습니다", "Something went wrong"]
 
 
 # ---------------------------------------------------------------- 크롬 (평소처럼 켜고 연결)
@@ -71,7 +74,7 @@ def start_real_chrome(profile_dir, port=DEBUG_PORT):
     subprocess.Popen([
         exe, f"--remote-debugging-port={port}", f"--user-data-dir={profile_dir}",
         "--start-maximized", "--no-first-run", "--no-default-browser-check",
-    ])
+    ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(40):
         time.sleep(0.5)
         if debug_port_alive(port):
@@ -98,29 +101,83 @@ def verification_showing(page):
     return False
 
 
-def wait_for_verification(page, studio_url):
-    """본인 인증 창이 있으면 사람이 인증을 마칠 때까지 기다렸다가 언어 화면을 다시 연다.
+class Session:
+    """크롬 연결 상태. 본인 인증 동안 연결을 끊었다가 다시 붙기 위해 page 를 여기서 관리한다."""
+
+    def __init__(self, p, profile_dir):
+        self.p = p
+        self.cdp_url = start_real_chrome(profile_dir)
+        self.browser = None
+        self.context = None
+        if self.cdp_url:
+            self._connect()
+        else:
+            print("[안내] 크롬을 평소처럼 켜지 못해 예전 방식으로 엽니다.")
+            self.context = p.chromium.launch_persistent_context(
+                profile_dir,
+                headless=False,
+                channel="chrome",
+                viewport={"width": 1400, "height": 900},
+            )
+            self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+
+    def _connect(self):
+        self.browser = self.p.chromium.connect_over_cdp(self.cdp_url)
+        context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
+        # 이미 열려 있는 스튜디오 탭이 있으면 그 탭을 그대로 쓴다 (사람이 인증을 마친 탭)
+        studio_tabs = [pg for pg in context.pages if "studio.youtube.com" in pg.url]
+        self.page = studio_tabs[-1] if studio_tabs else context.new_page()
+
+    def disconnect(self):
+        """크롬 창은 그대로 두고 프로그램의 연결만 끊는다."""
+        try:
+            self.browser.close()
+        except Exception:
+            pass
+        self.browser = None
+
+    def finish(self):
+        if self.browser is not None:
+            self.disconnect()
+        elif self.context is not None:
+            self.context.close()
+
+
+def wait_for_verification(sess, studio_url):
+    """본인 인증 창(또는 오류 화면)이 있으면, 사람이 인증을 마칠 때까지 기다렸다가 언어 화면을 다시 연다.
     인증 창이 있었으면 True."""
-    if not verification_showing(page):
+    if not verification_showing(sess.page):
         return False
-    print("\n  ⚠️ 구글 '본인 인증' 창이 떴습니다.")
-    print("     크롬 창에서 [다음]을 누르고 안내대로 인증을 마쳐 주세요.")
-    print(f"     인증이 끝나면 자동으로 이어서 진행합니다. (최대 {VERIFY_TIMEOUT_SEC // 60}분 기다림)")
-    try:
-        page.bring_to_front()
-    except Exception:
-        pass
-    deadline = time.time() + VERIFY_TIMEOUT_SEC
-    while time.time() < deadline:
-        time.sleep(2)
-        if not verification_showing(page):
+    while True:
+        print("\n  ⚠️ 구글 '본인 인증' 창(또는 '오류가 발생했습니다' 화면)이 보입니다.")
+        if sess.browser is not None:
+            try:
+                sess.page.bring_to_front()
+            except Exception:
+                pass
+            sess.disconnect()
+            print("     프로그램이 크롬에서 잠시 손을 뗐습니다. 크롬을 평소처럼 쓰시면 됩니다.")
+            print("     1) 크롬에서 [다음]을 누르고 안내대로 인증을 마쳐 주세요.")
+            print("     2) '오류가 발생했습니다'가 보이면 F5(새로고침)를 눌러 주세요.")
+            print("     3) 영상의 '언어' 화면(언어 표)이 정상으로 보이면, 이 까만 창에서 Enter 를 누르세요.")
+            try:
+                input("     인증이 끝났으면 Enter... ")
+            except EOFError:
+                pass
+            sess._connect()
+        else:
+            print("     크롬 창에서 [다음]을 누르고 안내대로 인증을 마쳐 주세요.")
+            print(f"     인증이 끝나면 자동으로 이어서 진행합니다. (최대 {VERIFY_TIMEOUT_SEC // 60}분 기다림)")
+            deadline = time.time() + VERIFY_TIMEOUT_SEC
+            while time.time() < deadline and verification_showing(sess.page):
+                time.sleep(2)
+        # 인증 전에 열려 있던 언어 창 등은 저장되지 않았을 수 있으니 언어 화면을 새로 연다
+        sess.page.goto(studio_url, wait_until="domcontentloaded")
+        sess.page.wait_for_timeout(3000)
+        if not verification_showing(sess.page):
             break
-    else:
-        raise RuntimeError("본인 인증이 끝나지 않아 멈췄습니다. 인증을 마친 뒤 다시 실행해 주세요.")
+        print("     아직 인증 창이나 오류 화면이 보입니다. 다시 한 번 확인해 주세요.")
     print("  ✅ 인증 확인됨. 이어서 진행합니다.\n")
-    page.wait_for_timeout(1500)
-    page.goto(studio_url, wait_until="domcontentloaded")
-    page.wait_for_timeout(2500)
     return True
 
 
@@ -271,25 +328,10 @@ def main():
 
     studio_url = f"https://studio.youtube.com/video/{video_id}/translations"
     with sync_playwright() as p:
-        cdp_url = start_real_chrome(PROFILE_DIR)
-        if cdp_url:
-            browser = p.chromium.connect_over_cdp(cdp_url)
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = context.new_page()
-            close_at_end = page.close  # 크롬 창은 남겨 두고 이번에 연 탭만 닫음
-        else:
-            print("[안내] 크롬을 평소처럼 켜지 못해 예전 방식으로 엽니다.")
-            context = p.chromium.launch_persistent_context(
-                PROFILE_DIR,
-                headless=False,
-                channel="chrome",
-                viewport={"width": 1400, "height": 900},
-            )
-            page = context.pages[0] if context.pages else context.new_page()
-            close_at_end = context.close
-        page.goto(studio_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
-        wait_for_verification(page, studio_url)
+        sess = Session(p, PROFILE_DIR)
+        sess.page.goto(studio_url, wait_until="domcontentloaded")
+        sess.page.wait_for_timeout(2500)
+        wait_for_verification(sess, studio_url)
 
         success, failed, skipped = 0, [], []
 
@@ -303,17 +345,17 @@ def main():
 
             print(f"[{i}/{len(rows)}] {yt_name} ({code}) 처리 중...")
             try:
-                wait_for_verification(page, studio_url)
+                wait_for_verification(sess, studio_url)
                 try:
-                    existing_names = get_existing_language_rows(page)
-                    process_language(page, yt_name, title, desc, existing_names)
+                    existing_names = get_existing_language_rows(sess.page)
+                    process_language(sess.page, yt_name, title, desc, existing_names)
                 except Exception:
                     # 본인 인증 창 때문에 막힌 것이면 인증을 기다렸다가 이 언어를 한 번 더
-                    if not wait_for_verification(page, studio_url):
+                    if not wait_for_verification(sess, studio_url):
                         raise
                     print(f"[{i}/{len(rows)}] {yt_name} ({code}) 다시 시도...")
-                    existing_names = get_existing_language_rows(page)
-                    process_language(page, yt_name, title, desc, existing_names)
+                    existing_names = get_existing_language_rows(sess.page)
+                    process_language(sess.page, yt_name, title, desc, existing_names)
                 print(f"  -> 완료")
                 success += 1
             except Exception as e:
@@ -321,12 +363,12 @@ def main():
                 failed.append(code)
                 # 실패 시 혹시 열려있는 다이얼로그 닫기 시도
                 try:
-                    page.keyboard.press("Escape")
-                    page.wait_for_timeout(500)
+                    sess.page.keyboard.press("Escape")
+                    sess.page.wait_for_timeout(500)
                 except Exception:
                     pass
 
-            page.wait_for_timeout(1000)
+            sess.page.wait_for_timeout(1000)
 
         print("\n=== 완료 ===")
         print(f"성공: {success} / 실패: {len(failed)} / 건너뜀: {len(skipped)}")
@@ -335,7 +377,7 @@ def main():
         if skipped:
             print("건너뛴 언어코드:", skipped)
 
-        close_at_end()
+        sess.finish()
 
 
 if __name__ == "__main__":

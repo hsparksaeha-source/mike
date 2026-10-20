@@ -54,7 +54,7 @@ def start_real_chrome(profile_dir, port=9222, chrome_path=None):
     subprocess.Popen([
         exe, f"--remote-debugging-port={port}", f"--user-data-dir={Path(profile_dir).resolve()}",
         "--start-maximized", "--no-first-run", "--no-default-browser-check",
-    ])
+    ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(40):
         time.sleep(0.5)
         if _debug_port_alive(port):
