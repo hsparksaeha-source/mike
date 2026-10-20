@@ -36,6 +36,9 @@ def browser_options(cfg, args):
         channel=cfg.get("browser_channel", "chrome"),
         cdp_url=args.cdp or cfg.get("cdp_url"),
         slow_mo=int(cfg.get("slow_mo_ms", 100)),
+        real_chrome=bool(cfg.get("use_real_chrome", True)),
+        debug_port=int(cfg.get("debug_port", 9222)),
+        chrome_path=cfg.get("chrome_path"),
     )
 
 
