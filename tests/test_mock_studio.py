@@ -160,9 +160,9 @@ def test_never_clicks_audio_add_button(tmp_path):
         browser.close()
 
 
-def test_waits_for_google_verification(tmp_path):
-    """도중에 구글 '본인 인증' 창이 떠도 멈추지 않고, 인증이 끝나면 남은 언어를 이어서 올린다."""
-    from thumb_agent.studio import ALL_LANGUAGES
+def test_stops_for_google_verification_and_resumes(tmp_path):
+    """도중에 구글 '본인 인증' 창이 뜨면 안내와 함께 멈추고, (인증 뒤) 다시 실행하면 남은 언어만 이어서 올린다."""
+    from thumb_agent.studio import ALL_LANGUAGES, VerificationRequired
     table = LanguageTable()
     make_images(tmp_path, ["english_thumb.jpg"])
     with sync_playwright() as pw:
@@ -171,12 +171,20 @@ def test_waits_for_google_verification(tmp_path):
         uploader = StudioThumbnailUploader(
             page, table, log_dir=tmp_path / "logs", progress_dir=tmp_path / "progress",
             step_delay=0.1, studio_url=MOCK_URL + "&verify=1")
-        summary = uploader.upload_all("abcdefghijk", {ALL_LANGUAGES: tmp_path / "english_thumb.jpg"})
-        assert page.evaluate("sessionStorage.getItem('verifyShown')") == "1"
-        # 인증 뒤 화면을 다시 열면 가짜 페이지는 처음 상태로 돌아가므로, 앞에서 끝낸 언어(진행 기록)는 건너뛰고
-        # 나머지 언어를 모두 올렸는지 본다
-        assert set(summary["ok"]) | {"nl"} >= {"ar", "el", "gu", "ne", "zh-Hans"}, summary
+        thumbs = {ALL_LANGUAGES: tmp_path / "english_thumb.jpg"}
+        try:
+            uploader.upload_all("abcdefghijk", thumbs)
+            raise AssertionError("본인 인증 창에서 멈춰야 합니다")
+        except VerificationRequired as exc:
+            assert "크롬_인증용_열기.bat" in str(exc)
+        # 저장 순간 인증 창이 뜬 언어는 저장됐는지 알 수 없으므로 완료로 기록하지 않는다
+        assert uploader.load_progress("abcdefghijk") == set()
+        page.wait_for_timeout(3500)                 # (사람이 인증을 마침)
+        summary = uploader.upload_all("abcdefghijk", thumbs)
         assert summary["failed"] == []
+        # 다시 실행하면 모든 언어에 썸네일이 들어가 있다 (처음 언어는 이미 들어가 있어 건너뜀)
+        assert set(summary["ok"]) | set(summary["skipped"]) == {"ar", "el", "gu", "ne", "nl", "zh-Hans"}
+        assert set(page.evaluate("window.uploaded").values()) == {"english_thumb.jpg"}
         browser.close()
 
 

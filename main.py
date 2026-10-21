@@ -30,14 +30,30 @@ def load_config(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# 유튜브 자동입력 프로그램(youtube_auto_translate_v2.py)이 쓰는 크롬 로그인 정보.
+# 있으면 같이 써서, 구글 본인 인증을 한 번만 하면 두 프로그램 모두 쓸 수 있게 한다.
+SHARED_PROFILE = Path.home() / "ChromeAutomationProfile"
+SHARED_DEBUG_PORT = 9223
+
+
+def profile_path(cfg):
+    if cfg.get("profile_dir"):
+        return BASE_DIR / cfg["profile_dir"]
+    if SHARED_PROFILE.exists():
+        return SHARED_PROFILE
+    return BASE_DIR / "browser_profile"
+
+
 def browser_options(cfg, args):
+    profile = profile_path(cfg)
+    default_port = SHARED_DEBUG_PORT if profile == SHARED_PROFILE else 9222
     return dict(
-        profile_dir=str(BASE_DIR / cfg.get("profile_dir", "browser_profile")),
+        profile_dir=str(profile),
         channel=cfg.get("browser_channel", "chrome"),
         cdp_url=args.cdp or cfg.get("cdp_url"),
         slow_mo=int(cfg.get("slow_mo_ms", 100)),
         real_chrome=bool(cfg.get("use_real_chrome", True)),
-        debug_port=int(cfg.get("debug_port", 9222)),
+        debug_port=int(cfg.get("debug_port", default_port)),
         chrome_path=cfg.get("chrome_path"),
     )
 
@@ -139,7 +155,7 @@ def cmd_interactive(cfg, args, table):
     print("=" * 60)
     print(" 유튜브 언어별 썸네일 자동 등록")
     print("=" * 60)
-    profile = BASE_DIR / cfg.get("profile_dir", "browser_profile")
+    profile = profile_path(cfg)
     if not profile.exists() and not (args.cdp or cfg.get("cdp_url")):
         print("\n처음 실행이라 먼저 유튜브 로그인을 진행합니다.")
         cmd_login(cfg, args)

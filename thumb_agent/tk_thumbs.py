@@ -12,7 +12,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from main import BASE_DIR, browser_options, load_config, run_uploads
+from main import browser_options, load_config, profile_path, run_uploads
 
 from .languages import LanguageTable
 from .studio import parse_video_id
@@ -49,7 +49,7 @@ class ThumbnailRunner:
         return self.table.code_for(lang_code) or lang_code
 
     def needs_login(self):
-        return not (BASE_DIR / self.cfg.get("profile_dir", "browser_profile")).exists()
+        return not profile_path(self.cfg).exists()
 
     def busy(self):
         if self.worker and self.worker.is_alive():

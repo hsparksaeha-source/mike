@@ -54,6 +54,10 @@ def _exact(words):
     return re.compile(r"^\s*(" + "|".join(re.escape(w) for w in words) + r")\s*$", re.I)
 
 
+class VerificationRequired(RuntimeError):
+    """구글 본인 인증이 필요해서 멈춤."""
+
+
 class StudioThumbnailUploader:
     def __init__(self, page, table: LanguageTable, *, ui_text=None, log_dir="logs",
                  progress_dir="progress", step_delay=1.0, overwrite=False, dry_run=False,
@@ -103,7 +107,8 @@ class StudioThumbnailUploader:
         time.sleep(self.step_delay)
 
     # ------------------------------------------------------------------ 구글 본인 인증
-    VERIFY_TEXTS = ["본인 인증", "본인임을 확인", "Verify it's you", "Verify it’s you", "Confirm it's you"]
+    VERIFY_TEXTS = ["본인 인증", "본인임을 확인", "Verify it's you", "Verify it’s you", "Confirm it's you",
+                    "오류가 발생했습니다", "Something went wrong"]
 
     def verification_showing(self) -> bool:
         """구글 '본인 인증' 창이 떠 있거나 인증(로그인) 화면으로 넘어갔는지."""
@@ -117,30 +122,17 @@ class StudioThumbnailUploader:
             return False
         return False
 
-    def wait_for_verification(self, return_url=None, timeout_sec=900) -> bool:
-        """본인 인증 창이 있으면 사람이 인증을 마칠 때까지 기다렸다가 스튜디오 화면으로 돌아온다.
-        인증 창이 있었으면 True."""
+    def wait_for_verification(self, return_url=None) -> bool:
+        """본인 인증 창(또는 오류 화면)이 있으면 작업을 멈춘다.
+        프로그램이 연결된 크롬에서는 구글이 인증을 받아 주지 않고 '오류가 발생했습니다'가 반복되므로,
+        연결을 끊고 평소 크롬에서 인증한 뒤 다시 실행하도록 안내한다. (끝낸 언어는 진행 기록에 남아 있음)"""
         if not self.verification_showing():
             return False
-        print("\n\n⚠️ 구글 '본인 인증' 창이 떴습니다.")
-        print("   크롬 창에서 [다음]을 누르고 안내대로 인증을 마쳐 주세요.")
-        print(f"   인증이 끝나면 자동으로 이어서 진행합니다. (최대 {timeout_sec // 60}분 기다림)")
-        try:
-            self.page.bring_to_front()
-        except Exception:
-            pass
-        deadline = time.time() + timeout_sec
-        while time.time() < deadline:
-            time.sleep(2)
-            if not self.verification_showing():
-                break
-        else:
-            raise RuntimeError("본인 인증이 끝나지 않아 멈췄습니다. 인증을 마친 뒤 다시 실행해 주세요.")
-        print("   ✅ 인증 확인됨. 이어서 진행합니다.\n")
-        time.sleep(self.step_delay)
-        if return_url and "/translations" not in self.page.url:
-            self.page.goto(return_url, wait_until="domcontentloaded")
-        return True
+        raise VerificationRequired(
+            "구글 '본인 인증'이 필요해서 멈췄습니다.\n"
+            "   1) 프로그램용 크롬 창(유튜브 스튜디오가 열린 창)을 X로 닫아 주세요.\n"
+            "   2) yt_automation 폴더의 '크롬_인증용_열기.bat'을 실행해 인증하고 채널을 선택한 뒤, 그 크롬도 닫아 주세요.\n"
+            "   3) 다시 [썸네일 등록]을 누르면 남은 언어만 이어서 합니다.")
 
     def list_languages_on_page(self) -> dict:
         """스튜디오 표에 보이는 언어들 -> {언어코드: 화면에 보이는 이름}."""
@@ -193,19 +185,17 @@ class StudioThumbnailUploader:
             name = on_page[code]
             print(f"[{i}/{len(targets)}] {name} <- {Path(path).name} ... ", end="", flush=True)
             try:
-                if self.wait_for_verification():
-                    self.open_translations(video_id)
-                    print(f"[{i}/{len(targets)}] {name} <- {Path(path).name} ... ", end="", flush=True)
+                self.wait_for_verification()
                 try:
                     status = self.upload_one(name, Path(path))
                 except Exception:
-                    # 도중에 본인 인증 창이 떠서 막힌 것이면, 인증을 기다렸다가 이 언어를 한 번 더 시도
-                    if not self.wait_for_verification():
-                        raise
-                    self._close_dialog()
-                    self.open_translations(video_id)
-                    print(f"[{i}/{len(targets)}] {name} <- {Path(path).name} (다시 시도) ... ", end="", flush=True)
-                    status = self.upload_one(name, Path(path))
+                    self.wait_for_verification()  # 도중에 본인 인증 창이 떠서 막힌 것이면 멈춤
+                    raise
+                if status.startswith("완료"):
+                    self.wait_for_verification()  # 저장 순간 인증 창이 떴으면 저장 안 됐을 수 있음
+            except VerificationRequired:
+                print("본인 인증 필요")
+                raise
             except Exception as exc:  # 한 언어가 실패해도 다음 언어는 계속 진행
                 print(f"실패 {(str(exc).splitlines() or [''])[0][:300]}")
                 shot = self._screenshot(video_id, code)
