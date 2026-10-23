@@ -9,7 +9,7 @@ md 파일 하나 = CAVN 앨범 하나 (앨범 이름 = md 파일 이름).
   짧은 곡 제목 (1).mp3 / 제목 (1).wav / 제목 (1).lrc / 제목 (1).jpg
   (가사 비디오, 창작 증명서는 받지 않음)
 
-AI 마스터링 (시작할 때 물어봄, 1곡당 5크레딧): 0=안 함, 1=긴 곡만, 2=두 곡 모두
+AI 마스터링 (시작할 때 앨범 전체를 할지 한 번만 물어봄, 1곡당 5크레딧)
   [더 보기 옆 AI 마스터링] → '밝고 선명한' → [AI 처리 시작] → 끝나면 다운로드
   → 제목_mastered.wav (두 곡 모두면 제목 (1)_mastered.wav 도)  ← 가요 캡컷 조립 프로그램이 읽는 이름
 
@@ -50,7 +50,8 @@ DOWNLOAD_TIMEOUT_MS = 180_000
 MASTER_STYLE = "밝고 선명한"     # AI 마스터링 스타일
 MASTER_TIMEOUT_SEC = 10 * 60     # 마스터링 처리 최대 대기
 CREDITS_PER_SONG = 5             # 곡 만들기 5크레딧/2곡, 마스터링 5크레딧/1곡
-MASTER_CHOICES = {0: "안 함", 1: "긴 곡만", 2: "두 곡 모두"}
+MASTER_TARGET = 1               # 마스터링을 하면: 1=긴 곡만, 2=두 곡 모두
+MASTER_CHOICES = {0: "안 함", 1: "함 (앨범 전체, 긴 곡만)", 2: "함 (앨범 전체, 두 곡 모두)"}
 GENERATING_RE = re.compile(r"생성\s*중|대기\s*중|처리\s*중|\d+\s*%|Generating|Queued|Pending", re.I)
 TIME_PAIR_RE = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*/\s*(\d{1,2}:\d{2}(?::\d{2})?)")
 
@@ -587,15 +588,20 @@ def status(out_dir, title, master=0):
     return "done"
 
 
-def ask_master():
-    print(f"AI 마스터링('{MASTER_STYLE}', 1곡당 {CREDITS_PER_SONG}크레딧)을 할까요?")
-    print("  0 = 안 함")
-    print("  1 = 긴 곡만    (제목_mastered.wav)")
-    print("  2 = 두 곡 모두 (제목_mastered.wav, 제목 (1)_mastered.wav)")
+def ask_master(album, count):
+    """앨범 전체를 마스터링할지 처음에 한 번만 묻는다."""
+    print("================================================")
+    print(f"  앨범 「{album}」 ({count}곡)")
+    print(f"  이 앨범 전체를 AI 마스터링('{MASTER_STYLE}') 할까요?")
+    target = "긴 곡만" if MASTER_TARGET == 1 else "두 곡 모두"
+    print(f"  ({target}, 1곡당 {CREDITS_PER_SONG}크레딧 → 제목_mastered.wav)")
+    print("================================================")
     while True:
-        answer = input("선택 (0/1/2): ").strip()
-        if answer in ("0", "1", "2"):
-            return int(answer)
+        answer = input("마스터링 (y/n): ").strip().lower()
+        if answer in ("y", "yes", "ㅛ", "예", "네"):
+            return MASTER_TARGET
+        if answer in ("n", "no", "ㅜ", "아니요", "아니오"):
+            return 0
 
 
 # ---------------------------------------------------------------- 실행
@@ -623,9 +629,9 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
 
     out_dir = Path(out_root) / safe_filename(album) / "노래"
     kind = "클래식(연주곡)" if tracks[0].classical else "가요/팝"
-    print(f"\nmd 파일 : {md_path.name}\n앨범    : {album}\n종류    : {kind}\n저장 폴더: {out_dir}\n")
     if master is None:
-        master = 0 if dry_run else ask_master()
+        master = 0 if dry_run else ask_master(album, len(tracks))
+    print(f"\nmd 파일 : {md_path.name}\n앨범    : {album}\n종류    : {kind}\n저장 폴더: {out_dir}")
     print(f"AI 마스터링: {MASTER_CHOICES[master]}\n")
     todo = []
     marks = {"done": "완료(건너뜀)", "need_master": "마스터링만 남음"}
@@ -683,7 +689,7 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--only", help="이 트랙 번호만 (예: 1,3,5)")
     ap.add_argument("--master", type=int, choices=[0, 1, 2],
-                    help="AI 마스터링 0=안 함, 1=긴 곡만, 2=두 곡 모두 (안 주면 시작할 때 물어봄)")
+                    help="앨범 전체 AI 마스터링 0=안 함, 1=긴 곡만, 2=두 곡 모두 (안 주면 시작할 때 물어봄)")
     ap.add_argument("--dry-run", action="store_true", help="md 파일만 읽어 보고 끝냄")
     args = ap.parse_args()
     only = {int(x) for x in re.findall(r"\d+", args.only)} if args.only else None
