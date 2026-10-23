@@ -592,7 +592,7 @@ def track_done(image_folder, scene_dir, number, n_images):
 
 # ---------------------------------------------------------------- 트랙 하나
 
-def make_track(flow, track, folder, scene_dir, n_images, reuse=False):
+def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False):
     folder.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
@@ -610,14 +610,22 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False):
         images = images[:n_images] if len(images) > n_images else images
         log(f"  이미지 {len(images)}장 완성")
 
-    first_made = images[-1]   # 새 이미지는 앞에 생기므로 맨 끝이 제일 처음 만든 것
-    video_prompt = track.video_prompt or track.image_prompt
-    log("  맨 끝 이미지를 프롬프트 칸에 끌어다 놓고 영상 요청")
-    before_video = {t["key"] for t in flow.tiles()}
-    flow.drag(flow.tile(first_made["key"], refresh=True), flow.prompt_box())
-    flow.send_prompt(f"{video_prompt}\n\n{VIDEO_REQUEST}")
-    video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
-    log("  영상 완성")
+    if reuse_video:
+        # 이 트랙 영상도 이미 만들어 둠 → 격자 맨 앞의 영상을 쓴다 (크레딧 안 씀)
+        videos = flow.tiles("video")
+        if not videos:
+            raise RuntimeError("Flow 화면에서 기존 영상을 찾지 못했습니다.")
+        video = videos[0]
+        log("  Flow 화면 맨 앞의 기존 영상을 씁니다 (새로 만들지 않음)")
+    else:
+        first_made = images[-1]   # 새 이미지는 앞에 생기므로 맨 끝이 제일 처음 만든 것
+        video_prompt = track.video_prompt or track.image_prompt
+        log("  맨 끝 이미지를 프롬프트 칸에 끌어다 놓고 영상 요청")
+        before_video = {t["key"] for t in flow.tiles()}
+        flow.drag(flow.tile(first_made["key"], refresh=True), flow.prompt_box())
+        flow.send_prompt(f"{video_prompt}\n\n{VIDEO_REQUEST}")
+        video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
+        log("  영상 완성")
 
     log("  새 컬렉션 만들고 이미지 넣기")
     flow.new_collection()
@@ -703,11 +711,14 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         return
     if confirm and input("시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
         return
-    reuse_first = False
+    reuse_first = reuse_video_first = False
     if confirm:
         print(f"\n{todo[0].number}번 트랙 이미지 {n_images}장을 지난번에 Flow 에서 이미 만들어 두었나요?")
         print("  (Flow 화면 맨 앞에 그 이미지들이 있으면 y → 새로 만들지 않고 그 이미지로 영상·컬렉션만 합니다)")
         reuse_first = input("기존 이미지 쓰기 (y/n): ").strip().lower() in ("y", "yes", "ㅛ")
+        if reuse_first:
+            print(f"{todo[0].number}번 트랙 영상도 이미 만들어 두었나요? (y → 새로 만들지 않고 컬렉션·다운로드만 합니다)")
+            reuse_video_first = input("기존 영상 쓰기 (y/n): ").strip().lower() in ("y", "yes", "ㅛ")
 
     def work(page):
         flow = Flow(page)
@@ -715,7 +726,8 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         for i, t in enumerate(todo, 1):
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
-                make_track(flow, t, out_dir / str(t.number), scene_dir, n_images, reuse=reuse_first and i == 1)
+                make_track(flow, t, out_dir / str(t.number), scene_dir, n_images,
+                           reuse=reuse_first and i == 1, reuse_video=reuse_video_first and i == 1)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)
