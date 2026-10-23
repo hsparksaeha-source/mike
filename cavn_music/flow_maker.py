@@ -5,11 +5,13 @@ md 파일의 트랙마다 (트랙 번호 N):
   2. 새로 생긴 이미지 중 화면 맨 끝(=제일 처음 만든) 것을 프롬프트 칸에 끌어다 놓고
      '영상 프롬프트'(없으면 뮤직 비디오 콘셉트) + "이 이미지로 영상 만들어 줘" → 영상 완성 기다림
   3. 오른쪽 위 [+] → [새 컬렉션] → 새 컬렉션에 이미지 15장을 끌어다 넣음 (영상은 그대로 둠)
-  4. 컬렉션에 마우스 올림 → [⋮] → [컬렉션 다운로드] → 압축을 풀어 이미지\\N\\ 에 저장
-  5. 영상도 이미지\\N\\N_영상.mp4 로 저장
+  4. 컬렉션에 마우스 올림 → [⋮] → [컬렉션 다운로드] → 받은 이미지 15장을 이미지\\N\\ 에 저장
+     (다운로드하면서 뜬 창은 닫음)
+  5. 영상은 따로 장면\\N.mp4 로 저장 (이미지 폴더에 섞이지 않게)
 
-저장 위치: <저장 폴더>\\<md 파일 이름>\\이미지\\1 ~ N  (캡컷 클래식 조립 프로그램이 읽는 번호 폴더)
-이미 이미지와 영상이 들어 있는 번호 폴더는 건너뛴다 (다시 실행하면 남은 트랙만 함).
+저장 위치: <저장 폴더>\\<md 파일 이름>\\이미지\\1 ~ N   이미지만 (캡컷 클래식 조립 프로그램이 읽는 번호 폴더)
+           <저장 폴더>\\<md 파일 이름>\\장면\\1.mp4 ~ N.mp4   영상
+이미지 15장과 영상이 이미 있는 트랙은 건너뛴다 (다시 실행하면 남은 트랙만 함).
 
 사용법:
   python flow_maker.py <md 파일> [--out F:\\음악생성] [--only 1,3,5] [--images 15] [--dry-run]
@@ -276,7 +278,10 @@ class Flow:
                 if len(got) != last[0]:
                     last = (len(got), time.time())
                 one_zip = len(got) == 1 and got[0].suggested_filename.lower().endswith(".zip")
-                if got and (one_zip or len(got) >= n_expected or time.time() - last[1] > 20):
+                if any(p not in pages_before for p in page.context.pages):
+                    page.bring_to_front()   # 다운로드 창이 열려도 작업 화면을 앞으로
+                idle = time.time() - last[1]
+                if got and (one_zip or len(got) >= n_expected or idle > 60):
                     break
             if not got:
                 raise RuntimeError("컬렉션 다운로드가 시작되지 않았습니다.")
@@ -335,17 +340,25 @@ def extract_images(zip_path, dest_dir):
     return count
 
 
-def folder_done(folder):
-    if not folder.is_dir():
+def video_path(scene_dir, number):
+    for ext in VIDEO_EXTS:
+        if (scene_dir / f"{number}{ext}").exists():
+            return scene_dir / f"{number}{ext}"
+    return None
+
+
+def track_done(image_folder, scene_dir, number, n_images):
+    """이미지 n_images장 이상과 영상이 다 있으면 끝난 트랙."""
+    if not image_folder.is_dir() or not video_path(scene_dir, number):
         return False
-    files = [f.suffix.lower() for f in folder.iterdir()]
-    return any(e in IMAGE_EXTS for e in files) and any(e in VIDEO_EXTS for e in files)
+    return sum(f.suffix.lower() in IMAGE_EXTS for f in image_folder.iterdir()) >= n_images
 
 
 # ---------------------------------------------------------------- 트랙 하나
 
-def make_track(flow, track, folder, n_images):
+def make_track(flow, track, folder, scene_dir, n_images):
     folder.mkdir(parents=True, exist_ok=True)
+    scene_dir.mkdir(parents=True, exist_ok=True)
     before = {t["key"] for t in flow.tiles()}
 
     log(f"  이미지 {n_images}장 요청")
@@ -380,17 +393,19 @@ def make_track(flow, track, folder, n_images):
         else:
             count += 1
     log(f"    이미지 {count}장 저장 → {folder}")
+    if count < len(images):
+        log(f"    !! {len(images)}장 중 {count}장만 받았습니다. 다시 실행하면 이 트랙을 다시 합니다.")
 
     log("  영상 다운로드")
-    video_name = f"{track.number}_영상"
+    video_name = str(track.number)
     try:
-        path = flow.download_via_menu(video["key"], re.compile("^\\s*(다운로드|Download)\\s*$", re.I), folder,
+        path = flow.download_via_menu(video["key"], re.compile("^\\s*(다운로드|Download)\\s*$", re.I), scene_dir,
                                       video_name, sub_re=re.compile(r"원본|720p|Original", re.I))
     except (PlaywrightTimeout, PlaywrightError, RuntimeError) as e:
         log(f"    (메뉴로 못 받아서 직접 받습니다: {str(e).splitlines()[0]})")
         flow.page.keyboard.press("Escape")
-        path = flow.save_video_src(video["key"], folder / f"{video_name}.mp4")
-    log(f"    받음: {path.name}")
+        path = flow.save_video_src(video["key"], scene_dir / f"{video_name}.mp4")
+    log(f"    받음: 장면\\{path.name}")
 
 
 # ---------------------------------------------------------------- 실행
@@ -413,14 +428,16 @@ def connect(pw):
 def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_images=IMAGES_PER_TRACK):
     md_path = Path(md_path)
     tracks = [t for t in parse_md_file(md_path) if not only or t.number in only]
-    out_dir = Path(out_root) / safe_filename(md_path.stem) / "이미지"
-    print(f"\nmd 파일 : {md_path.name}\n저장 폴더: {out_dir}\\1 ~ {max((t.number for t in tracks), default=0)}\n")
+    album_dir = Path(out_root) / safe_filename(md_path.stem)
+    out_dir, scene_dir = album_dir / "이미지", album_dir / "장면"
+    last = max((t.number for t in tracks), default=0)
+    print(f"\nmd 파일 : {md_path.name}\n이미지  : {out_dir}\\1 ~ {last}\n영상    : {scene_dir}\\1.mp4 ~ {last}.mp4\n")
     todo = []
     for t in tracks:
         folder = out_dir / str(t.number)
         if not t.image_prompt:
             mark = "!! 이미지 프롬프트 없음(건너뜀)"
-        elif folder_done(folder):
+        elif track_done(folder, scene_dir, t.number, n_images):
             mark = "완료(건너뜀)"
         else:
             mark = ""
@@ -441,7 +458,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         for i, t in enumerate(todo, 1):
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
-                make_track(flow, t, out_dir / str(t.number), n_images)
+                make_track(flow, t, out_dir / str(t.number), scene_dir, n_images)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)

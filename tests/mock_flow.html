@@ -104,7 +104,7 @@ function openMenu(item, button) {
       const files = item.members.map(id => ({name: `image_${id}.jpg`, text: `image ${id}`}));
       if (zipMode) download("collection.zip", makeZip(files));
       else {
-        files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([f.text])), i * 50));
+        files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([f.text])), i * 400));
         window.open("about:blank");   // 다운로드 때문에 새 창이 열리는 경우
       }
     }

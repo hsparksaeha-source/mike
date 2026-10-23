@@ -37,12 +37,13 @@ def test_flow_two_tracks(tmp_path, zip_mode):
         collections = page.evaluate("window.collections")
         browser.close()
 
-    folder1, folder2 = out / "낭만오케스트라3집" / "이미지" / "1", out / "낭만오케스트라3집" / "이미지" / "2"
+    album = out / "낭만오케스트라3집"
+    folder1, folder2 = album / "이미지" / "1", album / "이미지" / "2"
     for folder in (folder1, folder2):
         names = sorted(p.name for p in folder.iterdir())
-        assert len([n for n in names if n.endswith(".jpg")]) == 15, names
-        assert [n for n in names if n.endswith(".mp4")] == [f"{folder.name}_영상.mp4"]
-        assert not [n for n in names if n.endswith(".zip")]
+        assert len(names) == 15 and all(n.endswith(".jpg") for n in names), names   # 이미지만
+    # 영상은 따로 장면 폴더에
+    assert sorted(p.name for p in (album / "장면").iterdir()) == ["1.mp4", "2.mp4"]
 
     # 요청: 이미지 → (첫 이미지 첨부) 영상 → 이미지 → 영상
     assert [bool(r["attachment"]) for r in requests] == [False, True, False, True]
