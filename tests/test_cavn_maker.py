@@ -162,26 +162,34 @@ def test_parse_classical():
     assert t.exclude == "drum kit, vocal, harpsichord"
 
 
-def run_mock(tmp_path, md_text, md_name, lengths):
+def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,)):
+    """같은 브라우저(=같은 가짜 사이트 기록)에서 masters 개수만큼 이어서 실행한다."""
     md = tmp_path / md_name
     md.write_text(md_text, encoding="utf-8")
     out = tmp_path / "out"
+    states = []
     with sync_playwright() as pw:
         browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
         context = browser.new_context(viewport={"width": 1600, "height": 1000}, accept_downloads=True)
         page = context.new_page()
-        cavn_maker.run(md, out, page=page, confirm=False,
-                       create_url=f"{MOCK}?page=create&delay=1500&lengths={lengths}",
-                       albums_url=f"{MOCK}?page=albums")
-        created = page.evaluate("window.created")
-        bad = page.evaluate("window.badClick || null")
+        for master in masters:
+            cavn_maker.run(md, out, page=page, confirm=False, master=master,
+                           create_url=f"{MOCK}?page=create&delay=1500&lengths={lengths}",
+                           albums_url=f"{MOCK}?page=albums")
+            page.goto(MOCK)
+            states.append(page.evaluate("""() => ({
+                created: JSON.parse(localStorage.getItem('created') || '[]'),
+                mastered: JSON.parse(localStorage.getItem('mastered') || '[]'),
+                bad: localStorage.getItem('badClick')})"""))
         browser.close()
-    return out / md.stem / "노래", created, bad
+    return out / md.stem / "노래", states if len(states) > 1 else states[0]
 
 
 def test_pop_flow_on_mock(tmp_path):
-    songs, created, bad = run_mock(tmp_path, POP_MD, "카페소네트5_2장.md", "150,200")
-    assert bad is None   # 가사 비디오·창작 증명서는 누르지 않음
+    songs, state = run_mock(tmp_path, POP_MD, "카페소네트5_2장.md", "150,200")
+    created = state["created"]
+    assert state["bad"] is None
+    assert state["mastered"] == []   # 가사 비디오·창작 증명서는 누르지 않음
     assert [c["title"] for c in created] == ["You Were Already There", "Un'Estate Soltanto"]
     first = created[0]
     assert first["album"] == "카페소네트5_2장" and not first["instrumental"]
@@ -209,11 +217,25 @@ def test_pop_flow_on_mock(tmp_path):
 
 
 def test_classical_flow_and_resume(tmp_path):
-    songs, created, _ = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
-    [c] = created
+    songs, state = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
+    [c] = state["created"]
     assert c["instrumental"] and c["lyrics"] == ""
     assert c["style"].endswith("[Outro] (gentle cadence, slowly fading)")
     assert len(list(songs.iterdir())) == 10
     # 다시 실행하면 이미 받은 곡은 건너뜀
-    _, created2, _ = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
-    assert not created2   # 곡 만들기를 누르지 않음
+    _, state2 = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
+    assert state2["created"] == []   # 곡 만들기를 누르지 않음
+
+
+def test_mastering_long_only_then_both(tmp_path):
+    one_song = POP_MD.split("# Track 2.")[0]
+    title = "You Were Already There"
+    # 1회차: 긴 곡만, 2회차: 두 곡 모두 (곡은 새로 만들지 않고 짧은 곡 마스터링만)
+    songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "210,160", masters=(1, 2))
+    # 긴 곡(210초, 목록 첫 줄 = id 1)만 '밝고 선명한'으로 마스터링
+    assert first["mastered"] == [{"id": 1, "style": "밝고 선명한"}]
+    assert second["created"] == first["created"] and len(first["created"]) == 1
+    assert second["mastered"][1:] == [{"id": 2, "style": "밝고 선명한"}]
+    assert (songs / f"{title}_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#1"
+    assert (songs / f"{title} (1)_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#2"
+    assert len(list(songs.iterdir())) == 12

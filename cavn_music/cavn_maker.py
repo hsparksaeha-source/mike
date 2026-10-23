@@ -9,10 +9,15 @@ md 파일 하나 = CAVN 앨범 하나 (앨범 이름 = md 파일 이름).
   짧은 곡 제목 (1).mp3 / 제목 (1).wav / 제목 (1).lrc / 제목 (1).jpg
   (가사 비디오, 창작 증명서는 받지 않음)
 
+AI 마스터링 (시작할 때 물어봄, 1곡당 5크레딧): 0=안 함, 1=긴 곡만, 2=두 곡 모두
+  [더 보기 옆 AI 마스터링] → '밝고 선명한' → [AI 처리 시작] → 끝나면 다운로드
+  → 제목_mastered.wav (두 곡 모두면 제목 (1)_mastered.wav 도)  ← 가요 캡컷 조립 프로그램이 읽는 이름
+
 이미 '제목.wav'와 '제목 (1).wav'가 둘 다 있는 곡은 건너뛴다 (중간에 멈춰도 다시 실행하면 이어서 함).
+마스터링 파일만 빠진 곡은 곡을 새로 만들지 않고 마스터링만 한다.
 
 사용법:
-  python cavn_maker.py <md 파일> [--out F:\\음악생성] [--only 1,3,5] [--dry-run]
+  python cavn_maker.py <md 파일> [--out F:\\음악생성] [--only 1,3,5] [--master 0|1|2] [--dry-run]
 """
 
 import argparse
@@ -42,6 +47,10 @@ DEBUG_PORT = 9224  # 썸네일(9222)·유튜브 자동입력(9223)과 겹치지 
 POP_STYLE_INCLUDES_GENRE = True  # 가요/팝: 음악 스타일 칸에 '장르'도 앞에 붙여 넣음
 GENERATE_TIMEOUT_SEC = 15 * 60   # 곡 생성 최대 대기
 DOWNLOAD_TIMEOUT_MS = 180_000
+MASTER_STYLE = "밝고 선명한"     # AI 마스터링 스타일
+MASTER_TIMEOUT_SEC = 10 * 60     # 마스터링 처리 최대 대기
+CREDITS_PER_SONG = 5             # 곡 만들기 5크레딧/2곡, 마스터링 5크레딧/1곡
+MASTER_CHOICES = {0: "안 함", 1: "긴 곡만", 2: "두 곡 모두"}
 GENERATING_RE = re.compile(r"생성\s*중|대기\s*중|처리\s*중|\d+\s*%|Generating|Queued|Pending", re.I)
 TIME_PAIR_RE = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*/\s*(\d{1,2}:\d{2}(?::\d{2})?)")
 
@@ -434,6 +443,45 @@ class Cavn:
         dest.write_bytes(resp.body())
         return dest
 
+    # -- AI 마스터링
+    def master(self, row, dest_base):
+        """곡 줄의 [AI 마스터링] → 스타일 선택 → [AI 처리 시작] → 끝나면 받아서 dest_base + 확장자로 저장."""
+        page = self.page
+        buttons = self._visible(row.get_by_text("AI 마스터링", exact=True))
+        if buttons:
+            buttons[0].click()
+        else:
+            self._open_menu(row)
+            page.get_by_text("AI 마스터링", exact=True).filter(visible=True).last.click()
+        page.get_by_text("AI 마스터링 스타일 선택").first.wait_for(timeout=30_000)
+        time.sleep(2)
+        page.get_by_text(MASTER_STYLE, exact=True).filter(visible=True).first.click()
+        time.sleep(0.5)
+        page.get_by_role("button", name=re.compile("AI 처리 시작")).filter(visible=True).first.click()
+        log(f"    '{MASTER_STYLE}' 마스터링 처리 기다리는 중...")
+
+        download_btn = page.get_by_role("button", name=re.compile("다운로드")).or_(
+            page.get_by_role("link", name=re.compile("다운로드"))).filter(visible=True)
+        deadline = time.time() + MASTER_TIMEOUT_SEC
+        while time.time() < deadline:
+            if download_btn.count() and download_btn.first.is_enabled():
+                break
+            time.sleep(3)
+        else:
+            raise RuntimeError("마스터링이 제한 시간 안에 끝나지 않았습니다.")
+        time.sleep(1)
+        with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as info:
+            download_btn.first.click()
+            self._click_dialog_choice("WAV")  # 형식을 고르는 창이 뜨면 WAV
+        dl = info.value
+        ext = (Path(dl.suggested_filename).suffix or ".wav").lower()
+        dest = Path(str(dest_base) + ext)
+        dl.save_as(dest)
+        if ext != ".wav":
+            log(f"    !! 마스터링 파일이 wav가 아니라 {ext} 로 받아졌습니다.")
+        log(f"    받음: {dest.name}")
+        return dest
+
 
 # ---------------------------------------------------------------- 곡 하나 처리
 
@@ -447,9 +495,23 @@ def download_song(cavn, row, base, items):
     return saved
 
 
-def make_track(cavn, track, out_dir, pop_include_genre=POP_STYLE_INCLUDES_GENRE):
+def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP_STYLE_INCLUDES_GENRE):
     title = track.title
     fname = safe_filename(title)
+    long_base = out_dir / fname
+    short_base = out_dir / f"{fname} (1)"
+
+    if status(out_dir, title, master) == "need_master":
+        # 곡은 이미 받았고 마스터링만 빠짐 → 목록에서 그 곡을 찾아 마스터링만
+        log("  곡은 이미 받았으니 마스터링만 합니다.")
+        rows = cavn.song_rows(title)[:2]
+        if len(rows) < 2:
+            raise RuntimeError("곡 목록에서 이 제목의 곡 2개를 찾지 못했습니다.")
+        lengths = [cavn.song_length(r) for r in rows]
+        long_i = 0 if (lengths[0] or 0) >= (lengths[1] or 0) else 1
+        master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
+        return
+
     style = track.style_box(pop_include_genre)
     if len(style) > STYLE_MAX_LEN:
         raise RuntimeError(f"음악 스타일이 {len(style)}자라 {STYLE_MAX_LEN}자를 넘습니다. md 파일을 줄여 주세요.")
@@ -463,14 +525,12 @@ def make_track(cavn, track, out_dir, pop_include_genre=POP_STYLE_INCLUDES_GENRE)
     lengths = [cavn.song_length(r) for r in rows]
     log(f"  곡 길이: {', '.join(f'{s // 60}:{s % 60:02d}' if s else '?' for s in lengths)}")
 
-    long_base = out_dir / fname
-    short_base = out_dir / f"{fname} (1)"
     if all(lengths) and lengths[0] != lengths[1]:
-        long_row, short_row = (rows[0], rows[1]) if lengths[0] > lengths[1] else (rows[1], rows[0])
+        long_i = 0 if lengths[0] > lengths[1] else 1
         log("  긴 곡 받기")
-        download_song(cavn, long_row, long_base, AUDIO_ITEMS + TEXT_LYRIC_ITEMS)
+        download_song(cavn, rows[long_i], long_base, AUDIO_ITEMS + TEXT_LYRIC_ITEMS)
         log("  짧은 곡 받기")
-        download_song(cavn, short_row, short_base, AUDIO_ITEMS)
+        download_song(cavn, rows[1 - long_i], short_base, AUDIO_ITEMS)
     else:
         # 길이를 못 읽었으면: 둘 다 임시 이름으로 받고 wav 크기(=길이)로 긴 곡을 정한다
         log("  재생바에서 길이를 못 읽어 wav 파일 크기로 긴 곡을 정합니다.")
@@ -487,6 +547,26 @@ def make_track(cavn, track, out_dir, pop_include_genre=POP_STYLE_INCLUDES_GENRE)
         log("  긴 곡 가사 받기")
         download_song(cavn, rows[long_i], long_base, TEXT_LYRIC_ITEMS)
 
+    if master:
+        master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
+
+
+def master_songs(cavn, title, long_i, long_base, short_base, album_name, master):
+    """긴 곡(과 짧은 곡)을 마스터링. 마스터링 화면으로 갔다가 곡 만들기 화면으로 돌아온다."""
+    targets = [(long_i, long_base, "긴 곡")]
+    if master == 2:
+        targets.append((1 - long_i, short_base, "짧은 곡"))
+    for i, base, name in targets:
+        if Path(str(base) + "_mastered.wav").exists():
+            continue
+        log(f"  {name} AI 마스터링")
+        rows = cavn.song_rows(title)[:2]  # 화면을 다녀오면 다시 찾아야 함 (순서는 그대로)
+        try:
+            cavn.master(rows[i], Path(str(base) + "_mastered"))
+        finally:
+            cavn.open_create()
+            cavn.select_album(album_name, "right")
+
 
 def glob_escape(name):
     return re.sub(r"([\[\]*?])", r"[\1]", name)
@@ -496,9 +576,26 @@ def _size(path):
     return path.stat().st_size if path.exists() else 0
 
 
-def already_done(out_dir, title):
+def status(out_dir, title, master=0):
+    """'todo' = 곡을 만들어야 함, 'need_master' = 곡은 받았고 마스터링만 남음, 'done' = 끝."""
     fname = safe_filename(title)
-    return (out_dir / f"{fname}.wav").exists() and (out_dir / f"{fname} (1).wav").exists()
+    if not ((out_dir / f"{fname}.wav").exists() and (out_dir / f"{fname} (1).wav").exists()):
+        return "todo"
+    need = [f"{fname}_mastered.wav"] + ([f"{fname} (1)_mastered.wav"] if master == 2 else [])
+    if master and not all((out_dir / n).exists() for n in need):
+        return "need_master"
+    return "done"
+
+
+def ask_master():
+    print(f"AI 마스터링('{MASTER_STYLE}', 1곡당 {CREDITS_PER_SONG}크레딧)을 할까요?")
+    print("  0 = 안 함")
+    print("  1 = 긴 곡만    (제목_mastered.wav)")
+    print("  2 = 두 곡 모두 (제목_mastered.wav, 제목 (1)_mastered.wav)")
+    while True:
+        answer = input("선택 (0/1/2): ").strip()
+        if answer in ("0", "1", "2"):
+            return int(answer)
 
 
 # ---------------------------------------------------------------- 실행
@@ -515,7 +612,7 @@ def connect(pw):
 
 
 def run(md_path, out_root, only=None, dry_run=False, page=None,
-        create_url=CREATE_URL, albums_url=ALBUMS_URL, confirm=True):
+        create_url=CREATE_URL, albums_url=ALBUMS_URL, confirm=True, master=None):
     md_path = Path(md_path)
     album = md_path.stem
     tracks = parse_md_file(md_path)
@@ -527,17 +624,23 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
     out_dir = Path(out_root) / safe_filename(album) / "노래"
     kind = "클래식(연주곡)" if tracks[0].classical else "가요/팝"
     print(f"\nmd 파일 : {md_path.name}\n앨범    : {album}\n종류    : {kind}\n저장 폴더: {out_dir}\n")
+    if master is None:
+        master = 0 if dry_run else ask_master()
+    print(f"AI 마스터링: {MASTER_CHOICES[master]}\n")
     todo = []
+    marks = {"done": "완료(건너뜀)", "need_master": "마스터링만 남음"}
     for t in tracks:
         style_len = len(t.style_box(POP_STYLE_INCLUDES_GENRE))
-        done = out_dir.exists() and already_done(out_dir, t.title)
-        mark = "완료(건너뜀)" if done else ("!! 스타일 1000자 초과" if style_len > STYLE_MAX_LEN else "")
+        state = status(out_dir, t.title, master)
+        mark = marks.get(state) or ("!! 스타일 1000자 초과" if style_len > STYLE_MAX_LEN else "")
         print(f"  {t.number:>2}. {t.title}  (스타일 {style_len}자) {mark}")
         for w in t.warnings:
             print(f"      !! {w}")
-        if not done:
-            todo.append(t)
-    print(f"\n만들 곡 {len(todo)}개 (곡마다 2곡 생성, 크레딧이 사용됩니다)")
+        if state != "done":
+            todo.append((t, state))
+    new = sum(1 for _, state in todo if state == "todo")
+    credits = new * CREDITS_PER_SONG + len(todo) * master * CREDITS_PER_SONG
+    print(f"\n만들 곡 {new}개 (곡마다 2곡 생성), 마스터링 {len(todo) * master}곡 → 약 {credits}크레딧")
     if dry_run or not todo:
         return
     if confirm and input("시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
@@ -551,14 +654,15 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
         cavn.select_album(album_name, "left")
         cavn.select_album(album_name, "right")
         failed = []
-        for i, t in enumerate(todo, 1):
+        for i, (t, _) in enumerate(todo, 1):
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
                 cavn.select_album(album_name, "left")
-                make_track(cavn, t, out_dir)
+                make_track(cavn, t, out_dir, album_name, master)
             except Exception as e:  # 한 곡이 실패해도 다음 곡은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)
+                cavn.page.goto("about:blank")  # 마스터링 화면 등에 남아 있을 수 있으니 처음부터
                 cavn.open_create()
                 cavn.select_album(album_name, "right")
         print()
@@ -578,10 +682,12 @@ def main():
     ap.add_argument("md", help="Claude가 만든 음악 md 파일")
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--only", help="이 트랙 번호만 (예: 1,3,5)")
+    ap.add_argument("--master", type=int, choices=[0, 1, 2],
+                    help="AI 마스터링 0=안 함, 1=긴 곡만, 2=두 곡 모두 (안 주면 시작할 때 물어봄)")
     ap.add_argument("--dry-run", action="store_true", help="md 파일만 읽어 보고 끝냄")
     args = ap.parse_args()
     only = {int(x) for x in re.findall(r"\d+", args.only)} if args.only else None
-    run(args.md.strip('"'), args.out, only, args.dry_run)
+    run(args.md.strip('"'), args.out, only, args.dry_run, master=args.master)
 
 
 if __name__ == "__main__":
