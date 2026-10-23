@@ -395,6 +395,26 @@ class Cavn:
         }""", [title, self._mid_x()])
         return [self.page.locator(f"[data-cavn-row='{i}']").first for i in range(count)]
 
+    def wait_list_loaded(self, wait=20):
+        """오른쪽 곡 목록이 다 불러와질 때까지 기다린다 (보이는 [더 보기] 개수가 3초 동안 그대로면 끝).
+        앨범을 고른 직후엔 목록이 비어 보여서, 바로 세면 이미 있는 곡을 못 보고 새로 만들게 된다."""
+        count_js = """mid => [...document.querySelectorAll('body *')].filter(e => {
+            const own = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim();
+            const r = e.getBoundingClientRect();
+            return own === '더 보기' && r.width > 0 && r.height > 0 && r.left >= mid;
+        }).length"""
+        mid = self._mid_x()
+        deadline = time.time() + wait
+        last, since = -1, time.time()
+        while time.time() < deadline:
+            n = self.page.evaluate(count_js, mid)
+            if n != last:
+                last, since = n, time.time()
+            elif n > 0 and time.time() - since >= 3:
+                return n
+            time.sleep(0.5)
+        return max(last, 0)
+
     def row_ready(self, row):
         try:
             text = row.inner_text()
@@ -665,6 +685,7 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
     if len(style) > STYLE_MAX_LEN:
         raise RuntimeError(f"음악 스타일이 {len(style)}자라 {STYLE_MAX_LEN}자를 넘습니다. md 파일을 줄여 주세요.")
 
+    cavn.wait_list_loaded()
     existing = cavn.song_rows(title)
     if len(existing) >= 2 and all(cavn.row_ready(r) for r in existing[:2]):
         # 지난번에 만들어 놓고 못 받은 곡 → 크레딧을 다시 쓰지 않도록 새로 만들지 않고 그 2곡을 받는다

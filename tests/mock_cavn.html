@@ -175,7 +175,10 @@ if (page === "albums") {
       o.style.left = r.left + "px"; o.style.top = (r.bottom) + "px";
       o.innerHTML = Object.keys(albums).map(n => `<div role="option">${n} (${albums[n]})</div>`).join("");
       o.querySelectorAll("div").forEach((div, i) => div.onclick = () => {
-        current[side] = Object.keys(albums)[i]; closeAll(); redraw();
+        current[side] = Object.keys(albums)[i]; closeAll();
+        if (side === "right") { document.getElementById("list").innerHTML = ""; albumButton("right");
+                                setTimeout(redraw, 1500); }   // 목록이 늦게 불러와짐
+        else redraw();
       });
       document.body.appendChild(o);
     };
