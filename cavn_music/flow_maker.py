@@ -355,16 +355,26 @@ class Flow:
     def new_collection(self):
         page = self.page
         before = len(self.tiles("collection"))
-        plus = page.locator("button").filter(has_text=re.compile(r"^\s*add\s*$"))
-        plus = [b for b in plus.all() if b.is_visible()] or \
-            [b for b in page.get_by_role("button", name=re.compile(r"^(추가|만들기|새로 만들기|Add|Create)$")).all()
-             if b.is_visible()]
-        if not plus:
-            raise RuntimeError("오른쪽 위 [+] 버튼을 찾지 못했습니다.")
-        top = [b for b in plus if b.bounding_box() and b.bounding_box()["y"] < 150]
+        # 화면 맨 위 줄 오른쪽에 모인 버튼들(+, ?, ⚙, ⋮) 중 [+]. 그림만 있고 글자가 없을 수 있어서
+        # 'add/추가/만들기' 표시가 있으면 그것, 없으면 그 무리의 맨 왼쪽 버튼 (대화 창 입력칸의 + 말고)
+        width = page.evaluate("innerWidth")
+        # 검색칸 바로 옆의 필터 버튼은 빼려고, 검색칸 오른쪽 끝보다 충분히 오른쪽에 있는 버튼만 본다
+        search_right = max([b["x"] + b["width"] for _, b in self._visible_boxes(page.locator("input"))
+                            if b["y"] < 150] or [width * 0.55])
+        top = []
+        for el, box in self._visible_boxes(page.locator("button, [role=button]")):
+            if box["y"] < 150 and box["x"] > search_right + 100 and box["width"] < 80:
+                try:
+                    label = el.evaluate("e => ((e.getAttribute('aria-label') || '') + ' ' + (e.innerText || '')).trim()",
+                                        timeout=2000)
+                except PlaywrightError:
+                    label = ""
+                top.append((box["x"], label, el))
         if not top:
             raise RuntimeError("화면 맨 위 줄의 [+] 버튼을 찾지 못했습니다.")
-        max(top, key=lambda b: b.bounding_box()["x"]).click()   # 맨 위 줄의 맨 오른쪽 [+] (대화 창 입력칸의 + 말고)
+        named = [t for t in top if re.search(r"^\+$|\badd\b|추가|만들기|새로|create|new", t[1], re.I)]
+        plus = min(named or top, key=lambda t: t[0])[2]
+        plus.click()
         # 메뉴 항목 글자에 아이콘 이름이 붙어 있을 수 있어서 '새 컬렉션'이 들어 있는 가장 작은 항목을 누른다
         item = None
         for _ in range(10):
