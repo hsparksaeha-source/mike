@@ -381,16 +381,23 @@ def track_done(image_folder, scene_dir, number, n_images):
 
 # ---------------------------------------------------------------- 트랙 하나
 
-def make_track(flow, track, folder, scene_dir, n_images):
+def make_track(flow, track, folder, scene_dir, n_images, reuse=False):
     folder.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True, exist_ok=True)
-    before = {t["key"] for t in flow.tiles()}
 
-    log(f"  이미지 {n_images}장 요청")
-    flow.send_prompt(f"{track.image_prompt}\n\n{IMAGE_REQUEST.format(n=n_images)}")
-    images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)
-    images = images[:n_images] if len(images) > n_images else images
-    log(f"  이미지 {len(images)}장 완성")
+    if reuse:
+        # 이 트랙 이미지가 이미 Flow 화면 맨 앞에 있음 → 새로 만들지 않고 그 이미지를 쓴다
+        images = flow.tiles("image")[:n_images]
+        if len(images) < n_images:
+            raise RuntimeError(f"Flow 화면에 이미지가 {len(images)}장뿐이라 기존 이미지를 쓸 수 없습니다.")
+        log(f"  Flow 화면 맨 앞의 기존 이미지 {len(images)}장을 씁니다 (새로 만들지 않음)")
+    else:
+        before = {t["key"] for t in flow.tiles()}
+        log(f"  이미지 {n_images}장 요청")
+        flow.send_prompt(f"{track.image_prompt}\n\n{IMAGE_REQUEST.format(n=n_images)}")
+        images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)
+        images = images[:n_images] if len(images) > n_images else images
+        log(f"  이미지 {len(images)}장 완성")
 
     first_made = images[-1]   # 새 이미지는 앞에 생기므로 맨 끝이 제일 처음 만든 것
     video_prompt = track.video_prompt or track.image_prompt
@@ -485,6 +492,11 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         return
     if confirm and input("시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
         return
+    reuse_first = False
+    if confirm:
+        print(f"\n{todo[0].number}번 트랙 이미지 {n_images}장을 지난번에 Flow 에서 이미 만들어 두었나요?")
+        print("  (Flow 화면 맨 앞에 그 이미지들이 있으면 y → 새로 만들지 않고 그 이미지로 영상·컬렉션만 합니다)")
+        reuse_first = input("기존 이미지 쓰기 (y/n): ").strip().lower() in ("y", "yes", "ㅛ")
 
     def work(page):
         flow = Flow(page)
@@ -492,7 +504,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         for i, t in enumerate(todo, 1):
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
-                make_track(flow, t, out_dir / str(t.number), scene_dir, n_images)
+                make_track(flow, t, out_dir / str(t.number), scene_dir, n_images, reuse=reuse_first and i == 1)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)

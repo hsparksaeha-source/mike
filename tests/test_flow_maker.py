@@ -59,3 +59,27 @@ def test_flow_two_tracks(tmp_path, zip_mode):
 
     # 다시 실행하면 이미 끝난 트랙은 건너뜀
     flow_maker.run(md, out, page=None, confirm=False, dry_run=True)
+
+
+def test_reuse_existing_images(tmp_path):
+    """이미지 15장이 이미 Flow 맨 앞에 있으면, 새로 만들지 않고 그 이미지로 영상·컬렉션만 한다."""
+    from md_parser import parse_md
+    [track] = parse_md(EASY_MD)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300")
+        # 지난번에 이미지만 만들어 둔 상태를 흉내: 이미지 15장 요청
+        flow = flow_maker.Flow(page)
+        flow.send_prompt("photorealistic test 15장")
+        flow.wait_new("image", set(), 16, 30, settle=2)
+        flow_maker.make_track(flow, track, tmp_path / "이미지" / "1", tmp_path / "장면", 15, reuse=True)
+        requests = page.evaluate("window.requests")
+        collections = page.evaluate("window.collections")
+        browser.close()
+    assert [bool(r["attachment"]) for r in requests] == [False, True]   # 이미지 요청은 처음 1번뿐
+    assert requests[1]["attachment"] == 3                              # 그 15장(3~17) 중 제일 처음 것
+    assert sorted(collections[0]) == list(range(3, 18))
+    assert len(list((tmp_path / "이미지" / "1").iterdir())) == 15
+    assert [p.name for p in (tmp_path / "장면").iterdir()] == ["1.mp4"]
