@@ -189,6 +189,7 @@ function submit() {
   attachment = null; document.getElementById("attach").innerHTML = "";
   const m = text.match(/(\d+)장/);
   if (att) {
+    if (params.get("newthread") === "1") chat.innerHTML = "";   // 새 대화
     // 질문과 버튼은 승인한 뒤에도 대화 창에 그대로 남고, '승인' 말풍선과 영상 미리보기가 붙는다
     const ask = document.createElement("div");
     ask.innerHTML = `<p>15 크레딧을 사용하여 1개 동영상 생성을 시작하시겠습니까?</p>
@@ -223,7 +224,9 @@ document.getElementById("plus").onclick = () => {
   closeMenus();
   const m = document.createElement("div");
   m.className = "menu"; m.style.right = "20px"; m.style.top = "40px";
-  m.innerHTML = "<div>업로드</div><div>새 컬렉션</div><div>캐릭터 만들기</div><div>새로운 장면</div>";
+  m.innerHTML = "<div role='menuitem'>upload 업로드</div><div role='menuitem'>create_new_folder 새 컬렉션</div>" +
+                "<div role='menuitem'>person 캐릭터 만들기</div><div role='menuitem'>movie 새로운 장면</div>";
+  m.querySelectorAll("div")[2].onclick = () => { window.wrongMenu = "캐릭터"; };
   m.querySelectorAll("div")[1].onclick = () => {
     closeMenus(); items.unshift({id: nextId++, kind: "collection", members: []}); draw();
   };

@@ -31,7 +31,7 @@ def test_flow_two_tracks(tmp_path, zip_mode):
         browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
         context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
         page = context.new_page()
-        page.goto(f"{MOCK}?delay=300&zip={zip_mode}")
+        page.goto(f"{MOCK}?delay=300&zip={zip_mode}&newthread={1 - int(zip_mode)}")   # zip=0 쪽은 영상마다 새 대화
         flow_maker.run(md, out, page=page, confirm=False, n_images=15)
         requests = page.evaluate("window.requests")
         collections = page.evaluate("window.collections")

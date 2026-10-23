@@ -122,7 +122,8 @@ TILES_JS = """(box) => {
 class Flow:
     def __init__(self, page):
         self.page = page
-        self.approved_seen = 0   # 이미 처리한 확인 질문 수 (새로 생긴 질문만 승인)
+        self.question_seen = False   # 이번 요청에 확인 질문이 떴는지
+        self.approved = False        # 그 질문이 승인됐는지
 
     # -- 프롬프트 칸
     def prompt_box(self, wait=30):
@@ -180,7 +181,7 @@ class Flow:
 
     def send_prompt(self, text):
         # 보내기 직전의 [승인] 버튼 수를 기준으로, 이 요청에 새로 생기는 질문만 승인한다
-        self.approved_seen = len(self._questions())
+        self.mark_old_questions()
         box = self.prompt_box()
         box.click()
         self.page.keyboard.insert_text(text)
@@ -237,39 +238,89 @@ class Flow:
                 out.append((el, box))
         return out
 
-    def _questions(self):
-        """에이전트 확인 질문마다 하나씩 있는 [거부] 칸들 (화면 순서)."""
-        return self._visible_boxes(self.page.get_by_text(re.compile(r"^\s*(close\s*)?거부\s*$")))
+    DENY_RE = re.compile(r"^\s*(close\s*)?거부\s*$")
+    APPROVE_RE = re.compile(r"^\s*(check\s*)?승인\s*$")
+
+    def _questions(self, new_only=True):
+        """에이전트 확인 질문마다 하나씩 있는 [거부] 칸들 (화면 순서).
+        보내기 전에 있던 질문(예전 대화 포함)은 표시해 두고 새 질문만 돌려준다."""
+        out = []
+        for el, box in self._visible_boxes(self.page.get_by_text(self.DENY_RE)):
+            try:
+                old = el.evaluate("e => e.hasAttribute('data-cavn-old')", timeout=2000)
+            except PlaywrightError:
+                continue
+            if not (new_only and old):
+                out.append((el, box))
+        return out
+
+    def mark_old_questions(self):
+        for el, _ in self._questions(new_only=False):
+            try:
+                el.evaluate("e => e.setAttribute('data-cavn-old', '1')", timeout=2000)
+            except PlaywrightError:
+                pass
+        self.question_seen = False
+        self.approved = False
 
     def approve(self):
         """에이전트가 'N 크레딧을 사용하여 … 시작하시겠습니까?' 하고 물으면 [승인]을 누른다 ([항상 승인] 아님).
         승인 칸은 '버튼' 표시가 없을 수 있고, 대화 창에 예전 질문과 '승인' 말풍선도 남아 있어서
-        → 새로 생긴 질문의 [거부] 칸을 찾고, 그 바로 위에 있는 [승인] 칸을 누른다."""
+        → 새로 생긴 질문의 [거부] 칸을 찾고, 그 바로 위에 있는 [승인] 칸을 누른다.
+        이미 승인됐으면(사람이 눌렀어도) [거부] 아래에 '승인' 말풍선이 생기므로 그것도 승인으로 본다."""
         questions = self._questions()
-        if len(questions) <= self.approved_seen:
+        if not questions:
             return False
-        _, deny = questions[-1]
-        best = None
-        for el, box in self._visible_boxes(self.page.get_by_text(re.compile(r"^\s*(check\s*)?승인\s*$"))):
+        self.question_seen = True
+        deny_el, deny = questions[-1]
+        above, below = None, False
+        for el, box in self._visible_boxes(self.page.get_by_text(self.APPROVE_RE)):
             dy = deny["y"] - box["y"]
-            if 0 < dy < 260 and abs(box["x"] - deny["x"]) < 120 and (best is None or dy < best[0]):
-                best = (dy, el)
-        if not best:
+            if 0 < dy < 260 and abs(box["x"] - deny["x"]) < 120 and (above is None or dy < above[0]):
+                above = (dy, el)
+            if -500 < dy < 0:
+                below = True   # 승인 말풍선 → 이미 승인됨
+        if below:
+            self._done_question(deny_el, "    (확인 질문이 이미 승인되어 있습니다)")
+            return True
+        if not above:
             return False
         try:
-            best[1].click(timeout=3000)
+            above[1].click(timeout=3000)
         except PlaywrightError:
             return False
-        self.approved_seen = len(questions)
-        log("    에이전트 확인 질문에 [승인]을 눌렀습니다.")
+        self._done_question(deny_el, "    에이전트 확인 질문에 [승인]을 눌렀습니다.")
         return True
 
-    def wait_new(self, kind, before_keys, want, timeout, settle=10):
-        """kind 칸이 want 개 이상 새로 생기고 settle 초 동안 늘지 않을 때까지 기다린다."""
+    def _done_question(self, deny_el, message):
+        try:
+            deny_el.evaluate("e => e.setAttribute('data-cavn-old', '1')", timeout=2000)
+        except PlaywrightError:
+            pass
+        self.approved = True
+        log(message)
+
+    def wait_new(self, kind, before_keys, want, timeout, settle=10, after_approval=False):
+        """kind 칸이 want 개 이상 새로 생기고 settle 초 동안 늘지 않을 때까지 기다린다.
+        after_approval: 확인 질문이 뜨면 승인된 뒤에 생긴 것만 센다 (그 사이 끝난 다른 트랙 영상을 잘못 세지 않게).
+        질문이 90초 안에 안 뜨면(이미 '항상 승인'인 경우) 그냥 센다."""
         deadline = time.time() + timeout
+        start = time.time()
         last_count, last_change, last_note = -1, time.time(), 0
+        before_keys = set(before_keys)
         while time.time() < deadline:
+            was_approved = self.approved
             self.approve()
+            if after_approval:
+                if self.approved and not was_approved:
+                    before_keys |= {t["key"] for t in self.tiles(kind)}   # 승인 전에 있던 영상은 제외
+                    last_count = -1
+                if (self.question_seen and not self.approved) or (not self.question_seen and time.time() - start < 90):
+                    if time.time() - last_note > 60:
+                        log("  확인 질문(승인)을 기다리는 중... (못 누르면 Flow 에서 [승인]을 직접 눌러 주세요)")
+                        last_note = time.time()
+                    time.sleep(3)
+                    continue
             new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
             if len(new) != last_count:
                 last_count, last_change = len(new), time.time()
@@ -310,8 +361,28 @@ class Flow:
              if b.is_visible()]
         if not plus:
             raise RuntimeError("오른쪽 위 [+] 버튼을 찾지 못했습니다.")
-        max(plus, key=lambda b: b.bounding_box()["x"]).click()   # 맨 오른쪽 위 [+]
-        page.get_by_text("새 컬렉션", exact=True).filter(visible=True).first.click()
+        top = [b for b in plus if b.bounding_box() and b.bounding_box()["y"] < 150]
+        if not top:
+            raise RuntimeError("화면 맨 위 줄의 [+] 버튼을 찾지 못했습니다.")
+        max(top, key=lambda b: b.bounding_box()["x"]).click()   # 맨 위 줄의 맨 오른쪽 [+] (대화 창 입력칸의 + 말고)
+        # 메뉴 항목 글자에 아이콘 이름이 붙어 있을 수 있어서 '새 컬렉션'이 들어 있는 가장 작은 항목을 누른다
+        item = None
+        for _ in range(10):
+            time.sleep(0.5)
+            found = []
+            for loc in (page.get_by_role("menuitem", name=re.compile("새 컬렉션")),
+                        page.get_by_text(re.compile("새 컬렉션"))):
+                for el, box in self._visible_boxes(loc):
+                    found.append((box["width"] * box["height"], el))
+                if found:
+                    break
+            if found:
+                item = min(found, key=lambda t: t[0])[1]
+                break
+        if item is None:
+            page.keyboard.press("Escape")
+            raise RuntimeError("[+] 메뉴에서 '새 컬렉션'을 찾지 못했습니다.")
+        item.click()
         for _ in range(20):
             time.sleep(0.5)
             cols = self.tiles("collection")
@@ -485,7 +556,7 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False):
     before_video = {t["key"] for t in flow.tiles()}
     flow.drag(flow.tile(first_made["key"], refresh=True), flow.prompt_box())
     flow.send_prompt(f"{video_prompt}\n\n{VIDEO_REQUEST}")
-    video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC)[0]
+    video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
     log("  영상 완성")
 
     log("  새 컬렉션 만들고 이미지 넣기")
