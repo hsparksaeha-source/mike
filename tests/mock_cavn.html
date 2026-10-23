@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 CAVN</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #111; color: #eee; }
+  #left { position: fixed; left: 0; top: 0; width: 38%; bottom: 60px; overflow: auto; padding: 10px; box-sizing: border-box; }
+  #right { position: fixed; right: 0; top: 0; width: 60%; bottom: 60px; overflow: auto; padding: 10px; box-sizing: border-box; }
+  #player { position: fixed; left: 0; right: 0; bottom: 0; height: 60px; background: #000; }
+  .row { border-bottom: 1px solid #333; padding: 8px; height: 110px; box-sizing: border-box; }
+  .row img { width: 50px; height: 50px; background: #555; }
+  textarea { width: 90%; height: 80px; display: block; }
+  #make { width: 90%; display: block; }
+  #rightAlbum { width: 300px; }
+  .menu, .dialog, .options { position: fixed; background: #222; border: 1px solid #888; padding: 8px; z-index: 10; }
+  .menu { right: 20px; top: 40px; }
+  .dialog { left: 30%; top: 30%; }
+  .menu div, .options div { padding: 4px; cursor: pointer; }
+  #albumsPage { padding: 20px; }
+</style>
+</head>
+<body>
+<div id="albumsPage" hidden>
+  <h2>내 앨범</h2>
+  <button id="newAlbum">+ 앨범 만들기</button>
+  <div id="albumCards"></div>
+</div>
+
+<div id="createPage" hidden>
+  <div id="left">
+    <div><button>영감 모드</button><button id="customTab">커스텀 모드</button></div>
+    <label>제목 (필수)</label>
+    <input type="text" id="title">
+    <div>가사 (필수) <span><button role="switch" id="instr" aria-checked="false"></button><span>연주곡</span></span></div>
+    <textarea id="lyrics"></textarea>
+    <div>음악 스타일</div>
+    <textarea id="style" maxlength="1000"></textarea>
+    <div id="advToggle">고급 설정</div>
+    <div id="adv" hidden><label>제외할 스타일<input type="text" id="exclude"></label></div>
+    <button id="leftAlbum" aria-haspopup="listbox"></button>
+    <button id="make">지금 만들기</button>
+  </div>
+  <div id="right">
+    <button id="rightAlbum" aria-haspopup="listbox"></button>
+    <input type="text" placeholder="곡 검색...">
+    <div id="list"></div>
+  </div>
+  <div id="player"><span id="ptitle"></span> <span id="ptime">00:00 / 00:00</span></div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const lengths = (params.get("lengths") || "150,200").split(",").map(Number);
+const genDelay = Number(params.get("delay") || 1500);
+let albums = JSON.parse(localStorage.getItem("albums") || '{"기본 앨범":0}');
+let songs = [];       // {title, album, length, ready, id}
+let current = {left: "기본 앨범", right: "기본 앨범"};
+let nextId = 1;
+window.created = [];  // 만들기 눌렀을 때 입력값 기록
+const save = () => localStorage.setItem("albums", JSON.stringify(albums));
+const fmt = s => String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+
+function closeAll() { document.querySelectorAll(".menu,.dialog,.options").forEach(e => e.remove()); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeAll(); });
+
+function download(name, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text]));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+if (params.get("page") === "albums") {
+  document.getElementById("albumsPage").hidden = false;
+  const draw = () => {
+    document.getElementById("albumCards").innerHTML =
+      Object.keys(albums).map(n => `<div class="card"><h3>${n}</h3><span>${albums[n]}곡</span></div>`).join("");
+  };
+  draw();
+  document.getElementById("newAlbum").onclick = () => {
+    const d = document.createElement("div");
+    d.className = "dialog"; d.setAttribute("role", "dialog");
+    d.innerHTML = `<div>새 앨범</div><input type="text" maxlength="50"><button>취소</button><button>만들기</button>`;
+    document.body.appendChild(d);
+    d.querySelectorAll("button")[1].onclick = () => {
+      albums[d.querySelector("input").value] = 0; save(); closeAll(); draw();
+    };
+  };
+} else {
+  document.getElementById("createPage").hidden = false;
+  const instr = document.getElementById("instr");
+  instr.onclick = () => {
+    const on = instr.getAttribute("aria-checked") !== "true";
+    instr.setAttribute("aria-checked", on);
+    document.getElementById("lyrics").style.display = on ? "none" : "block";
+  };
+  document.getElementById("advToggle").onclick = () => {
+    const adv = document.getElementById("adv"); adv.hidden = !adv.hidden;
+  };
+
+  function albumButton(side) {
+    const b = document.getElementById(side + "Album");
+    b.textContent = `${current[side]} (${albums[current[side]]})`;
+    b.onclick = () => {
+      closeAll();
+      const o = document.createElement("div");
+      o.className = "options"; o.setAttribute("role", "listbox");
+      const r = b.getBoundingClientRect();
+      o.style.left = r.left + "px"; o.style.top = (r.bottom) + "px";
+      o.innerHTML = Object.keys(albums).map(n => `<div role="option">${n} (${albums[n]})</div>`).join("");
+      o.querySelectorAll("div").forEach((div, i) => div.onclick = () => {
+        current[side] = Object.keys(albums)[i]; closeAll(); redraw();
+      });
+      document.body.appendChild(o);
+    };
+  }
+
+  function redraw() {
+    albumButton("left"); albumButton("right");
+    const list = document.getElementById("list");
+    list.innerHTML = "";
+    songs.filter(s => s.album === current.right).forEach(s => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = `<img alt=""><span class="t">${s.title}</span> <span>CAVNV5.5</span>
+        <div>${s.ready ? "<button>MV 만들기</button><button>AI 마스터링</button>" : "생성 중 42%"}</div>
+        <button class="more">더 보기</button>`;
+      row.querySelector("img").onclick = () => {
+        document.getElementById("ptitle").textContent = s.title;
+        document.getElementById("ptime").textContent = "00:00 / " + fmt(s.length);
+      };
+      row.querySelector(".more").onclick = () => s.ready && openMenu(s);
+      list.appendChild(row);
+    });
+  }
+
+  function openMenu(s) {
+    closeAll();
+    const m = document.createElement("div");
+    m.className = "menu";
+    const items = ["MP3 오디오 다운로드", "WAV 오디오 다운로드", "가사 비디오 다운로드", "스크롤 가사 다운로드",
+                   "텍스트 가사 다운로드", "곡 커버 다운로드", "창작 증명서 받기"];
+    m.innerHTML = "<div>다운로드 및 내보내기</div>" + items.map(i => `<div class="item">${i}</div>`).join("");
+    m.querySelectorAll(".item").forEach(div => div.onclick = () => {
+      const item = div.textContent;
+      closeAll();
+      const tag = `${s.title}#${s.id}`;
+      if (item.startsWith("MP3")) download(`${s.title}.mp3`, `mp3 ${tag}`);
+      if (item.startsWith("WAV")) download(`${s.title}.wav`, "w".repeat(s.length * 10) + tag);
+      if (item.startsWith("스크롤")) download(`${s.title}.lrc`, `[00:01.00] ${tag}`);
+      if (item.startsWith("곡 커버")) download(`${s.title}.jpeg`, `jpg ${tag}`);
+      if (item.startsWith("가사 비디오") || item.startsWith("창작")) window.badClick = item;
+      if (item.startsWith("텍스트")) {
+        const d = document.createElement("div");
+        d.className = "dialog";
+        d.innerHTML = `<div>텍스트 가사 다운로드</div><button>구간 라벨 유지</button><button>가사 본문만</button>`;
+        d.querySelectorAll("button").forEach(b => b.onclick = () => {
+          closeAll(); download(`${s.title}.txt`, `${b.textContent} ${tag}`);
+        });
+        document.body.appendChild(d);
+      }
+    });
+    document.body.appendChild(m);
+  }
+
+  document.getElementById("make").onclick = () => {
+    const title = document.getElementById("title").value;
+    const instrumental = document.getElementById("instr").getAttribute("aria-checked") === "true";
+    window.created.push({
+      title, instrumental, album: current.left,
+      lyrics: instrumental ? "" : document.getElementById("lyrics").value,
+      style: document.getElementById("style").value,
+      exclude: document.getElementById("exclude").value,
+    });
+    const pair = lengths.map(len => ({title, album: current.left, length: len, ready: false, id: nextId++}));
+    songs = pair.concat(songs);
+    albums[current.left] += 2; save();
+    redraw();
+    setTimeout(() => { pair.forEach(s => s.ready = true); redraw(); }, genDelay);
+  };
+  redraw();
+}
+</script>
+</body>
+</html>

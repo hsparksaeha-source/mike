@@ -137,3 +137,10 @@ install.bat / run.bat   윈도우용 설치 · 실행
 ```
 
 > ⚠️ `browser_profile` 폴더에는 로그인 정보가 들어 있습니다. 다른 사람에게 주거나 인터넷에 올리지 마세요.
+
+---
+
+## CAVN AI 자동 곡 만들기 (`cavn_music/`)
+
+Claude가 만든 음악 md 파일로 CAVN AI에서 곡을 만들고 mp3·wav·가사·커버를 F드라이브에 내려받는 프로그램입니다.
+`cavn_music/CAVN_음악만들기.bat` 실행 → 자세한 설명은 [`cavn_music/사용방법.md`](cavn_music/사용방법.md).
