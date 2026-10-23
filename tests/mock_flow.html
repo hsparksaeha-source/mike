@@ -7,7 +7,7 @@
   body { margin: 0; font-family: sans-serif; background: #000; color: #eee; }
   #side { position: fixed; left: 0; top: 0; bottom: 0; width: 200px; padding: 10px; box-sizing: border-box; }
   #top { position: fixed; right: 20px; top: 10px; }
-  #grid { position: absolute; left: 220px; top: 60px; right: 20px; bottom: 140px; overflow: auto; }
+  #grid { position: absolute; left: 220px; top: 60px; right: 20px; bottom: 0; overflow: auto; }
   .tile { display: inline-block; position: relative; width: 240px; height: 135px; margin: 6px;
           background: #333; border-radius: 10px; vertical-align: top; }
   .tile img, .tile video { width: 240px; height: 135px; display: block; }
@@ -16,7 +16,7 @@
   .tile:hover .acts { display: block; }
   .menu { position: fixed; background: #222; border: 1px solid #777; padding: 6px; z-index: 9; }
   .menu div { padding: 4px 8px; cursor: pointer; }
-  #promptWrap { position: fixed; left: 35%; width: 30%; bottom: 20px; background: #222; padding: 10px; border-radius: 12px; }
+  #promptWrap { position: fixed; left: 35%; width: 30%; bottom: 20px; background: #222; padding: 10px; border-radius: 12px; z-index: 5; }
   #prompt { min-height: 40px; outline: none; }
   #attach img { width: 60px; }
 </style>

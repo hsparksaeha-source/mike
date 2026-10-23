@@ -61,7 +61,10 @@ def safe_filename(name):
 
 # 화면의 미디어 칸(이미지·영상·컬렉션)을 위에서 아래, 왼쪽에서 오른쪽 순서로 읽는다.
 # 왼쪽 메뉴(라이브러리)와 아래 프롬프트 칸은 빼고, 가운데 격자만 본다.
-TILES_JS = """(promptTop) => {
+TILES_JS = """(prompt) => {
+    // prompt = 아래쪽 입력창 영역. 그 안에 있는 것(입력창에 붙인 이미지)만 빼고, 격자는 입력창 아래로도 이어지므로 다 센다
+    const inPrompt = r => prompt && r.left + r.width / 2 > prompt.x - 20 && r.left + r.width / 2 < prompt.x + prompt.width + 20
+        && r.top + r.height / 2 > prompt.y - 60 && r.top + r.height / 2 < prompt.y + prompt.height + 20;
     document.querySelectorAll('[data-cavn-tile]').forEach(e => e.removeAttribute('data-cavn-tile'));
     const side = [...document.querySelectorAll('*')].find(e =>
         (e.innerText || '').trim() === '전체 미디어' && e.getBoundingClientRect().width > 0);
@@ -79,7 +82,7 @@ TILES_JS = """(promptTop) => {
     const add = (tile, kind, key) => {
         if (seen.has(tile)) return;
         const r = tile.getBoundingClientRect();
-        if (r.width < 60 || r.height < 40 || r.left < sideRight || r.top >= promptTop) return;
+        if (r.width < 60 || r.height < 40 || r.left < sideRight || inPrompt(r)) return;
         seen.add(tile);
         tile.setAttribute('data-cavn-tile', key);
         out.push({kind, key, x: r.left, y: r.top, text: tile.innerText || ''});
@@ -177,7 +180,7 @@ class Flow:
     # -- 격자
     def tiles(self, kind=None):
         box = self.prompt_box().bounding_box()
-        items = self.page.evaluate(TILES_JS, box["y"] if box else 100000)
+        items = self.page.evaluate(TILES_JS, box)
         return [t for t in items if kind is None or t["kind"] == kind]
 
     def tile(self, key, refresh=False):
