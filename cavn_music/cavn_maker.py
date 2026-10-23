@@ -11,7 +11,8 @@ md 파일 하나 = CAVN 앨범 하나 (앨범 이름 = md 파일 이름).
 
 AI 마스터링 (시작할 때 앨범 전체를 할지 한 번만 물어봄, 1곡당 5크레딧)
   [더 보기 옆 AI 마스터링] → '밝고 선명한' → [AI 처리 시작] → 끝나면 다운로드
-  → 제목_mastered.wav (두 곡 모두면 제목 (1)_mastered.wav 도)  ← 가요 캡컷 조립 프로그램이 읽는 이름
+  → 제목_mastered.wav  ← 가요 캡컷 조립 프로그램이 읽는 이름
+  크레딧을 아끼려고 마스터링은 항상 각 제목의 긴 곡 하나만 한다 (짧은 곡은 하지 않음).
 
 이미 '제목.wav'와 '제목 (1).wav'가 둘 다 있는 곡은 건너뛴다 (중간에 멈춰도 다시 실행하면 이어서 함).
 마스터링 파일만 빠진 곡은 곡을 새로 만들지 않고 마스터링만 한다.
@@ -50,8 +51,7 @@ DOWNLOAD_TIMEOUT_MS = 180_000
 MASTER_STYLE = "밝고 선명한"     # AI 마스터링 스타일
 MASTER_TIMEOUT_SEC = 10 * 60     # 마스터링 처리 최대 대기
 CREDITS_PER_SONG = 5             # 곡 만들기 5크레딧/2곡, 마스터링 5크레딧/1곡
-MASTER_TARGET = 1               # 마스터링을 하면: 1=긴 곡만, 2=두 곡 모두
-MASTER_CHOICES = {0: "안 함", 1: "함 (앨범 전체, 긴 곡만)", 2: "함 (앨범 전체, 두 곡 모두)"}
+MASTER_CHOICES = {0: "안 함", 1: "함 (앨범 전체, 긴 곡만)"}
 GENERATING_RE = re.compile(r"생성\s*중|대기\s*중|처리\s*중|\d+\s*%|Generating|Queued|Pending", re.I)
 TIME_PAIR_RE = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*/\s*(\d{1,2}:\d{2}(?::\d{2})?)")
 
@@ -553,11 +553,8 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
 
 
 def master_songs(cavn, title, long_i, long_base, short_base, album_name, master):
-    """긴 곡(과 짧은 곡)을 마스터링. 마스터링 화면으로 갔다가 곡 만들기 화면으로 돌아온다."""
-    targets = [(long_i, long_base, "긴 곡")]
-    if master == 2:
-        targets.append((1 - long_i, short_base, "짧은 곡"))
-    for i, base, name in targets:
+    """긴 곡 하나만 마스터링 (크레딧 절약). 마스터링 화면으로 갔다가 곡 만들기 화면으로 돌아온다."""
+    for i, base, name in [(long_i, long_base, "긴 곡")]:
         if Path(str(base) + "_mastered.wav").exists():
             continue
         log(f"  {name} AI 마스터링")
@@ -582,8 +579,7 @@ def status(out_dir, title, master=0):
     fname = safe_filename(title)
     if not ((out_dir / f"{fname}.wav").exists() and (out_dir / f"{fname} (1).wav").exists()):
         return "todo"
-    need = [f"{fname}_mastered.wav"] + ([f"{fname} (1)_mastered.wav"] if master == 2 else [])
-    if master and not all((out_dir / n).exists() for n in need):
+    if master and not (out_dir / f"{fname}_mastered.wav").exists():
         return "need_master"
     return "done"
 
@@ -593,13 +589,12 @@ def ask_master(album, count):
     print("================================================")
     print(f"  앨범 「{album}」 ({count}곡)")
     print(f"  이 앨범 전체를 AI 마스터링('{MASTER_STYLE}') 할까요?")
-    target = "긴 곡만" if MASTER_TARGET == 1 else "두 곡 모두"
-    print(f"  ({target}, 1곡당 {CREDITS_PER_SONG}크레딧 → 제목_mastered.wav)")
+    print(f"  (긴 곡 하나만, 1곡당 {CREDITS_PER_SONG}크레딧 → 제목_mastered.wav)")
     print("================================================")
     while True:
         answer = input("마스터링 (y/n): ").strip().lower()
         if answer in ("y", "yes", "ㅛ", "예", "네"):
-            return MASTER_TARGET
+            return 1
         if answer in ("n", "no", "ㅜ", "아니요", "아니오"):
             return 0
 
@@ -688,8 +683,8 @@ def main():
     ap.add_argument("md", nargs="?", help="Claude가 만든 음악 md 파일 (없으면 실행할 때 물어봄)")
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--only", help="이 트랙 번호만 (예: 1,3,5)")
-    ap.add_argument("--master", type=int, choices=[0, 1, 2],
-                    help="앨범 전체 AI 마스터링 0=안 함, 1=긴 곡만, 2=두 곡 모두 (안 주면 시작할 때 물어봄)")
+    ap.add_argument("--master", type=int, choices=[0, 1],
+                    help="앨범 전체 AI 마스터링 0=안 함, 1=함(긴 곡만) (안 주면 시작할 때 물어봄)")
     ap.add_argument("--dry-run", action="store_true", help="md 파일만 읽어 보고 끝냄")
     args = ap.parse_args()
     md = ask_md_path(args.md)

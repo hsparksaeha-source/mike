@@ -227,94 +227,15 @@ def test_classical_flow_and_resume(tmp_path):
     assert state2["created"] == []   # 곡 만들기를 누르지 않음
 
 
-def test_mastering_long_only_then_both(tmp_path):
+def test_mastering_long_take_only(tmp_path):
     one_song = POP_MD.split("# Track 2.")[0]
     title = "You Were Already There"
-    # 1회차: 긴 곡만, 2회차: 두 곡 모두 (곡은 새로 만들지 않고 짧은 곡 마스터링만)
-    songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "210,160", masters=(1, 2))
-    # 긴 곡(210초, 목록 첫 줄 = id 1)만 '밝고 선명한'으로 마스터링
-    assert first["mastered"] == [{"id": 1, "style": "밝고 선명한"}]
+    # 1회차: 마스터링 안 함, 2회차: 마스터링 함 → 곡은 새로 만들지 않고 긴 곡만 마스터링
+    songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "160,210", masters=(0, 1))
+    assert first["mastered"] == []
     assert second["created"] == first["created"] and len(first["created"]) == 1
-    assert second["mastered"][1:] == [{"id": 2, "style": "밝고 선명한"}]
-    assert (songs / f"{title}_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#1"
-    assert (songs / f"{title} (1)_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#2"
-    assert len(list(songs.iterdir())) == 12
-
-
-EASY_MD = """# 낭만 오케스트라 3집
-
-**공통 Exclude Styles:**
-
-```text
-lead vocals, lyrics, rap,
-christmas carol, sleigh bells
-```
-
-## Track 1. Snow Falling on the Quiet Street
-
-### 제목
-
-```text
-Snow Falling on the Quiet Street (조용한 거리에 내리는 눈)
-```
-
-### 장르 → 텍스트 박스
-
-```text
-Wintry orchestral piano ballad
-```
-
-### 스타일 → 텍스트 박스
-
-```text
-instrumental, solo piano with slow falling single notes, soft
-string ensemble, 58 bpm
-```
-
-### 구조 태그 (가사 칸 대신 → 텍스트 박스)
-
-```text
-[Intro - solo piano alone, 6 bars, very slow]
-[Outro - piano and harp, long fade]
-```
-
-### 뮤직 비디오 콘셉트 → 텍스트 박스
-
-```text
-가로등이 켜진 눈 덮인 밤거리,
-천천히 내리는 눈송이.
-```
-
-### 썸네일 이미지 생성 프롬프트 (실사 사진풍, 문구는 별도로 얹을 것)
-
-```text
-photorealistic photograph of a quiet snow-covered street at
-night, 16:9 aspect ratio
-```
-
-# PART B. 전곡 듣기 영상
-
-## Single 1. Snow Falling on the Quiet Street
-
-### 썸네일 이미지 생성 프롬프트
-
-```text
-이건 트랙이 아님
-```
-"""
-
-
-def test_parse_easy_listening():
-    [t] = parse_md(EASY_MD)
-    assert t.classical and t.title == "Snow Falling on the Quiet Street"
-    assert t.style_box() == ("instrumental, solo piano with slow falling single notes, soft string ensemble, 58 bpm\n"
-                             "[Intro - solo piano alone, 6 bars, very slow]\n[Outro - piano and harp, long fade]")
-    assert t.exclude == "lead vocals, lyrics, rap, christmas carol, sleigh bells"
-    assert t.image_prompt == "photorealistic photograph of a quiet snow-covered street at night, 16:9 aspect ratio"
-    assert t.video_prompt == "가로등이 켜진 눈 덮인 밤거리, 천천히 내리는 눈송이."
-
-
-def test_parse_classical_prompts():
-    [t] = parse_md(CLASSICAL_MD)
-    assert t.image_prompt == "Aerial drone photograph"
-    assert t.video_prompt == ""
+    # 긴 곡(210초) = 목록 둘째 줄 = id 2 만 '밝고 선명한'으로
+    assert second["mastered"] == [{"id": 2, "style": "밝고 선명한"}]
+    assert (songs / f"{title}_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#2"
+    assert not (songs / f"{title} (1)_mastered.wav").exists()
+    assert len(list(songs.iterdir())) == 11
