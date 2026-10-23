@@ -274,3 +274,82 @@ def test_resume_missing_lyrics_and_mastering(tmp_path):
     short_id = (songs / f"{title} (1).wav").read_text().split("#")[-1]
     assert (songs / f"{title} (1).lrc").read_text().endswith("#" + short_id)   # 짧은 곡의 lrc
     assert len(list(p for p in songs.iterdir() if not p.name.startswith("."))) == 11
+
+
+EASY_MD = """# 낭만 오케스트라 3집
+
+**공통 Exclude Styles:**
+
+```text
+lead vocals, lyrics, rap,
+christmas carol, sleigh bells
+```
+
+## Track 1. Snow Falling on the Quiet Street
+
+### 제목
+
+```text
+Snow Falling on the Quiet Street (조용한 거리에 내리는 눈)
+```
+
+### 장르 → 텍스트 박스
+
+```text
+Wintry orchestral piano ballad
+```
+
+### 스타일 → 텍스트 박스
+
+```text
+instrumental, solo piano with slow falling single notes, soft
+string ensemble, 58 bpm
+```
+
+### 구조 태그 (가사 칸 대신 → 텍스트 박스)
+
+```text
+[Intro - solo piano alone, 6 bars, very slow]
+[Outro - piano and harp, long fade]
+```
+
+### 뮤직 비디오 콘셉트 → 텍스트 박스
+
+```text
+가로등이 켜진 눈 덮인 밤거리,
+천천히 내리는 눈송이.
+```
+
+### 썸네일 이미지 생성 프롬프트 (실사 사진풍, 문구는 별도로 얹을 것)
+
+```text
+photorealistic photograph of a quiet snow-covered street at
+night, 16:9 aspect ratio
+```
+
+# PART B. 전곡 듣기 영상
+
+## Single 1. Snow Falling on the Quiet Street
+
+### 썸네일 이미지 생성 프롬프트
+
+```text
+이건 트랙이 아님
+```
+"""
+
+
+def test_parse_easy_listening():
+    [t] = parse_md(EASY_MD)
+    assert t.classical and t.title == "Snow Falling on the Quiet Street"
+    assert t.style_box() == ("instrumental, solo piano with slow falling single notes, soft string ensemble, 58 bpm\n"
+                             "[Intro - solo piano alone, 6 bars, very slow]\n[Outro - piano and harp, long fade]")
+    assert t.exclude == "lead vocals, lyrics, rap, christmas carol, sleigh bells"
+    assert t.image_prompt == "photorealistic photograph of a quiet snow-covered street at night, 16:9 aspect ratio"
+    assert t.video_prompt == "가로등이 켜진 눈 덮인 밤거리, 천천히 내리는 눈송이."
+
+
+def test_parse_classical_prompts():
+    [t] = parse_md(CLASSICAL_MD)
+    assert t.image_prompt == "Aerial drone photograph"
+    assert t.video_prompt == ""

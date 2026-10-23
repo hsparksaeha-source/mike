@@ -121,18 +121,34 @@ class Flow:
         self.page = page
 
     # -- 프롬프트 칸
-    def prompt_box(self):
-        page = self.page
-        for loc in (page.get_by_placeholder(PROMPT_PLACEHOLDER),
-                    page.locator(f"[aria-placeholder='{PROMPT_PLACEHOLDER}'], [data-placeholder='{PROMPT_PLACEHOLDER}']"),
-                    page.locator("[contenteditable=true]"),
-                    page.locator("textarea")):
-            boxes = [b for b in loc.all() if b.is_visible()]
-            if boxes:
-                box = boxes[-1]
-                box.evaluate("e => e.setAttribute('data-cavn-prompt', '1')")
-                return box
-        raise RuntimeError("Flow 프롬프트 칸('무엇을 만들고 싶으신가요?')을 찾지 못했습니다.")
+    def prompt_box(self, wait=30):
+        """아래쪽 프롬프트 칸('무엇을 만들고 싶으신가요?'). 화면이 늦게 떠도 wait 초까지 기다린다."""
+        deadline = time.time() + wait
+        while True:
+            found = self.page.evaluate("""(ph) => {
+                document.querySelectorAll('[data-cavn-prompt]').forEach(e => e.removeAttribute('data-cavn-prompt'));
+                const shown = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+                const boxes = [...document.querySelectorAll('textarea, input, [contenteditable=true], [contenteditable=""], [role=textbox]')]
+                    .filter(shown);
+                const hint = e => [e.placeholder, e.getAttribute('aria-placeholder'), e.getAttribute('data-placeholder'),
+                                   e.getAttribute('aria-label'), e.innerText].filter(Boolean).join(' ');
+                // 1) 안내 문구가 붙은 칸  2) 화면 아래쪽에 있는 가장 아래 글상자
+                let box = boxes.find(e => hint(e).includes(ph));
+                if (!box) {
+                    const low = boxes.filter(e => e.tagName !== 'INPUT' && e.getBoundingClientRect().top > innerHeight * 0.6);
+                    low.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+                    box = low[0];
+                }
+                if (!box) return false;
+                box.setAttribute('data-cavn-prompt', '1');
+                return true;
+            }""", PROMPT_PLACEHOLDER)
+            if found:
+                return self.page.locator("[data-cavn-prompt]").first
+            if time.time() > deadline:
+                raise RuntimeError("Flow 프롬프트 칸('무엇을 만들고 싶으신가요?')을 찾지 못했습니다. "
+                                   "프로젝트 화면(전체 미디어)이 열려 있는지 확인해 주세요.")
+            time.sleep(1)
 
     def send_prompt(self, text):
         box = self.prompt_box()
@@ -423,6 +439,14 @@ def connect(pw):
         page.goto(FLOW_URL, wait_until="domcontentloaded")
         print("\n크롬에서 Flow 에 로그인하고, 작업할 프로젝트를 열어 주세요 (새 프로젝트도 됨).")
         input("프로젝트 화면(전체 미디어)이 보이면 Enter 를 누르세요... ")
+        # 프로젝트를 다른 탭에서 열었을 수도 있으니, 프로젝트가 열린 탭을 다시 찾는다
+        projects = [p for p in context.pages if "flow.google" in p.url and "/project/" in p.url]
+        if projects:
+            page = projects[-1]
+        elif "/project/" not in page.url:
+            print("!! 프로젝트가 열린 탭을 찾지 못했습니다. 지금 탭에서 그대로 진행합니다.")
+        page.bring_to_front()
+    log(f"작업 탭: {page.url}")
     return page
 
 
