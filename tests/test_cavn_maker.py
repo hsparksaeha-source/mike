@@ -241,3 +241,13 @@ def test_mastering_long_take_only(tmp_path):
     assert (songs / f"{title}_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#2"
     assert not (songs / f"{title} (1)_mastered.wav").exists()
     assert len(list(songs.iterdir())) == 11
+
+    # 처음부터 마스터링 함: 긴 곡 6개 → 긴 곡 마스터링 → 짧은 곡 4개 순서
+    (tmp_path / "b").mkdir()
+    songs2, state = run_mock(tmp_path / "b", one_song, "칸쏘네2.md", "160,210", masters=(1,))
+    names = sorted(songs2.iterdir(), key=lambda p: p.stat().st_mtime)
+    order = [p.name for p in names]
+    assert len(order) == 11
+    assert order.index(f"{title}_mastered.wav") == 6
+    assert order[:6] == [f"{title}.mp3", f"{title}.wav", f"{title}.lrc", f"{title}_구간라벨.txt",
+                         f"{title}_가사본문.txt", f"{title}.jpeg"]

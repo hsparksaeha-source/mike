@@ -5,8 +5,9 @@ md 파일 하나 = CAVN 앨범 하나 (앨범 이름 = md 파일 이름).
         → 2곡 생성 대기 → 재생바에서 곡 길이 확인 → 긴 곡부터 다운로드
 
 저장 위치: <저장 폴더>\\<md 파일 이름>\\노래\\  (캡컷 조립 프로그램이 읽는 구조)
-  긴 곡   제목.mp3 / 제목.wav / 제목.lrc / 제목.jpg / 제목_구간라벨.txt / 제목_가사본문.txt
-  짧은 곡 제목 (1).mp3 / 제목 (1).wav / 제목 (1).lrc / 제목 (1).jpg
+  긴 곡   제목.mp3 / 제목.wav / 제목.lrc / 제목_구간라벨.txt / 제목_가사본문.txt / 제목.jpg
+          → (마스터링을 고르면) 바로 긴 곡 마스터링 제목_mastered.wav
+  짧은 곡 제목 (1).mp3 / 제목 (1).wav / 제목 (1).lrc / 제목 (1).jpg      합계 11개
   (가사 비디오, 창작 증명서는 받지 않음)
 
 AI 마스터링 (시작할 때 앨범 전체를 할지 한 번만 물어봄, 1곡당 5크레딧)
@@ -18,7 +19,7 @@ AI 마스터링 (시작할 때 앨범 전체를 할지 한 번만 물어봄, 1�
 마스터링 파일만 빠진 곡은 곡을 새로 만들지 않고 마스터링만 한다.
 
 사용법:
-  python cavn_maker.py <md 파일> [--out F:\\음악생성] [--only 1,3,5] [--master 0|1|2] [--dry-run]
+  python cavn_maker.py <md 파일> [--out F:\\음악생성] [--only 1,3,5] [--master 0|1] [--dry-run]
 """
 
 import argparse
@@ -66,6 +67,7 @@ TEXT_LYRIC_ITEMS = [
     ("텍스트 가사 다운로드", "구간 라벨 유지", "_구간라벨", ".txt"),
     ("텍스트 가사 다운로드", "가사 본문만", "_가사본문", ".txt"),
 ]
+LONG_ITEMS = AUDIO_ITEMS[:3] + TEXT_LYRIC_ITEMS + AUDIO_ITEMS[3:]   # mp3, wav, lrc, 텍스트 가사 2개, 커버
 
 
 def log(msg):
@@ -609,9 +611,13 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
     if all(lengths) and lengths[0] != lengths[1]:
         long_i = 0 if lengths[0] > lengths[1] else 1
         log("  긴 곡 받기")
-        download_song(cavn, rows[long_i], long_base, AUDIO_ITEMS + TEXT_LYRIC_ITEMS)
+        download_song(cavn, rows[long_i], long_base, LONG_ITEMS)
+        if master:   # 긴 곡 6개 → 바로 긴 곡 마스터링 → 짧은 곡 4개 (합계 11개)
+            master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
         log("  짧은 곡 받기")
+        rows = cavn.song_rows(title)[:2]   # 마스터링 화면을 다녀왔으니 다시 찾음 (순서는 그대로)
         download_song(cavn, rows[1 - long_i], short_base, AUDIO_ITEMS)
+        return
     else:
         # 길이를 못 읽었으면: 둘 다 임시 이름으로 받고 wav 크기(=길이)로 긴 곡을 정한다
         log("  재생바에서 길이를 못 읽어 wav 파일 크기로 긴 곡을 정합니다.")
