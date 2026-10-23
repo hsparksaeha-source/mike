@@ -23,6 +23,7 @@ AI 마스터링 (시작할 때 앨범 전체를 할지 한 번만 물어봄, 1�
 """
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -567,7 +568,7 @@ class Cavn:
             pass
 
     def _close_overlays(self):
-        """열린 메뉴·다운로드 창 닫기. 창이 남아 있으면 다음 메뉴를 가려서 못 누르게 된다."""
+        """열린 메뉴·다운로드 창 닫기. 창이 남아 있으면 화면 전체를 막아서 다음 메뉴를 못 누르게 된다."""
         page = self.page
         for _ in range(2):
             try:
@@ -575,31 +576,38 @@ class Cavn:
             except PlaywrightError:
                 pass
             time.sleep(0.3)
-        # Esc 로 안 닫히는 다운로드 창은 오른쪽 위 닫기(X)
-        for _ in range(3):
-            still = [b for b in page.get_by_role("button", name=re.compile("파일 다운로드")).all() if b.is_visible()]
-            if not still:
-                return
-            box = still[-1].evaluate_handle("""b => {
-                let d = b;
-                for (let i = 0; i < 8 && d.parentElement; i++) {
-                    d = d.parentElement;
-                    const c = [...d.querySelectorAll('button, [role=button]')].find(x =>
-                        x !== b && /닫기|close|^\\s*[×✕xX]\\s*$/i.test((x.getAttribute('aria-label') || '') + ' ' + (x.innerText || '')));
-                    if (c) return c;
-                    const icon = [...d.querySelectorAll('button')].find(x => x !== b && !(x.innerText || '').trim());
-                    if (icon) return icon;   // 글자 없는 아이콘 버튼 = X
+        for _ in range(4):
+            left = page.evaluate("""() => {
+                const shown = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+                const dialogs = [...document.querySelectorAll('[role=dialog], [role=alertdialog], [aria-modal=true]')]
+                    .filter(shown);
+                // role 이 없는 창: [파일 다운로드] 버튼이 들어 있는 상자
+                for (const b of document.querySelectorAll('button')) {
+                    if (/파일 다운로드/.test(b.innerText || '') && shown(b)) {
+                        let d = b;
+                        for (let i = 0; i < 6 && d.parentElement; i++) d = d.parentElement;
+                        dialogs.push(d);
+                    }
                 }
-                return null;
-            }""").as_element()
-            try:
-                if box:
-                    box.click(timeout=3000)
-                else:
-                    page.mouse.click(5, 5)   # 창 바깥을 눌러 닫기
-            except PlaywrightError:
-                page.mouse.click(5, 5)
-            time.sleep(0.5)
+                for (const d of dialogs) {
+                    const btns = [...d.querySelectorAll('button, [role=button]')].filter(shown);
+                    const close = btns.find(x => /닫기|close/i.test(x.getAttribute('aria-label') || '') ||
+                                                 /^\\s*[×✕]\\s*$/.test(x.innerText || ''))
+                               || btns.find(x => !(x.innerText || '').trim() && x.querySelector('svg'));
+                    if (close) { close.click(); return 'closed'; }
+                }
+                // 창은 안 보이는데 화면이 막혀 있으면(닫히다 멈춘 창) 다시 누를 수 있게 풀어 준다
+                if (getComputedStyle(document.body).pointerEvents === 'none') {
+                    document.body.style.pointerEvents = 'auto';
+                    return 'unblocked';
+                }
+                return dialogs.length ? 'stuck' : 'clear';
+            }""")
+            if left == "clear":
+                return
+            if left == "stuck":
+                page.mouse.click(5, 5)   # 창 바깥을 눌러 닫기
+            time.sleep(0.6)
 
     def _save_cover_image(self, row, dest_base):
         src = row.locator("img").first.get_attribute("src")
@@ -670,15 +678,22 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
     long_base = out_dir / fname
     short_base = out_dir / f"{fname} (1)"
 
-    if status(out_dir, title, master) == "need_master":
-        # 곡은 이미 받았고 마스터링만 빠짐 → 목록에서 그 곡을 찾아 마스터링만
-        log("  곡은 이미 받았으니 마스터링만 합니다.")
+    if status(out_dir, title, master) == "need_extra":
+        # 곡(wav 2개)은 이미 받았고 텍스트 가사나 마스터링만 빠짐 → 새로 만들지 않고 빠진 것만
+        log("  곡은 이미 받았으니 빠진 파일(텍스트 가사·마스터링)만 받습니다.")
+        cavn.wait_list_loaded()
         rows = cavn.song_rows(title)[:2]
         if len(rows) < 2:
             raise RuntimeError("곡 목록에서 이 제목의 곡 2개를 찾지 못했습니다.")
-        lengths = [cavn.song_length(r) for r in rows]
-        long_i = 0 if (lengths[0] or 0) >= (lengths[1] or 0) else 1
-        master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
+        long_i = load_long_i(out_dir, title)
+        if long_i is None:   # 기록이 없으면 재생바 길이로
+            lengths = [cavn.song_length(r) for r in rows]
+            long_i = 0 if (lengths[0] or 0) >= (lengths[1] or 0) else 1
+        missing = [it for it in TEXT_LYRIC_ITEMS if not Path(str(long_base) + it[2] + it[3]).exists()]
+        if missing:
+            download_song(cavn, rows[long_i], long_base, missing)
+        if master:
+            master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
         return
 
     style = track.style_box(pop_include_genre)
@@ -714,6 +729,7 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
         for f in sorted(tmp.glob(f"{glob_escape(fname)}__{i}.*")):
             shutil.move(str(f), str(base) + f.suffix)
     shutil.rmtree(tmp, ignore_errors=True)
+    save_long_i(out_dir, title, long_i)
     log("  긴 곡 텍스트 가사 받기")
     download_song(cavn, rows[long_i], long_base, TEXT_LYRIC_ITEMS)
 
@@ -744,13 +760,35 @@ def _size(path):
 
 
 def status(out_dir, title, master=0):
-    """'todo' = 곡을 만들어야 함, 'need_master' = 곡은 받았고 마스터링만 남음, 'done' = 끝."""
+    """'todo' = 곡을 만들어야 함, 'need_extra' = 곡은 받았고 텍스트 가사·마스터링이 빠짐, 'done' = 끝."""
     fname = safe_filename(title)
     if not ((out_dir / f"{fname}.wav").exists() and (out_dir / f"{fname} (1).wav").exists()):
         return "todo"
     if master and not (out_dir / f"{fname}_mastered.wav").exists():
-        return "need_master"
+        return "need_extra"
+    if not all((out_dir / f"{fname}{tail}{ext}").exists() for _, _, tail, ext in TEXT_LYRIC_ITEMS):
+        return "need_extra"
     return "done"
+
+
+STATE_FILE = ".긴곡기록.json"   # 제목마다 목록에서 몇 번째 줄이 긴 곡이었는지 (빠진 파일을 이어 받을 때 씀)
+
+
+def load_long_i(out_dir, title):
+    try:
+        return json.loads((out_dir / STATE_FILE).read_text(encoding="utf-8")).get(title)
+    except (OSError, ValueError):
+        return None
+
+
+def save_long_i(out_dir, title, long_i):
+    path = out_dir / STATE_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data[title] = long_i
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def ask_master(album, count):
@@ -799,7 +837,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
     print(f"\nmd 파일 : {md_path.name}\n앨범    : {album}\n종류    : {kind}\n저장 폴더: {out_dir}")
     print(f"AI 마스터링: {MASTER_CHOICES[master]}\n")
     todo = []
-    marks = {"done": "완료(건너뜀)", "need_master": "마스터링만 남음"}
+    marks = {"done": "완료(건너뜀)", "need_extra": "빠진 파일만 받음"}
     for t in tracks:
         style_len = len(t.style_box(POP_STYLE_INCLUDES_GENRE))
         state = status(out_dir, t.title, master)

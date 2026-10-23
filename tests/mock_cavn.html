@@ -227,12 +227,15 @@ if (page === "albums") {
       if (item.startsWith("곡 커버")) download(`${s.title}.jpeg`, `jpg ${tag}`);
       if (item.startsWith("가사 비디오") || item.startsWith("창작")) store("badClick", item);
       if (item.startsWith("텍스트")) {
+        // 실제 화면처럼: 고른 뒤에도 창이 남아 있고, 열려 있는 동안 화면 전체가 막힘(body pointer-events: none)
         const d = document.createElement("div");
-        d.className = "dialog";
-        d.innerHTML = `<div>텍스트 가사 다운로드</div><button>구간 라벨 유지</button><button>가사 본문만</button>`;
-        d.querySelectorAll("button").forEach(b => b.onclick = () => {
-          closeAll(); download(`${s.title}.txt`, `${b.textContent} ${tag}`);
-        });
+        d.setAttribute("role", "dialog");
+        d.style.cssText = "position:fixed;left:30%;top:30%;background:#222;padding:20px;pointer-events:auto;z-index:60";
+        d.innerHTML = `<div>텍스트 가사 다운로드 <button class="x"><svg width="10" height="10"></svg></button></div>
+          <button class="c">구간 라벨 유지</button><button class="c">가사 본문만</button>`;
+        document.body.style.pointerEvents = "none";
+        d.querySelector(".x").onclick = () => { d.remove(); document.body.style.pointerEvents = ""; };
+        d.querySelectorAll(".c").forEach(b => b.onclick = () => download(`${s.title}.txt`, `${b.textContent} ${tag}`));
         document.body.appendChild(d);
       }
     });

@@ -200,7 +200,7 @@ def test_pop_flow_on_mock(tmp_path):
     assert first["exclude"] == "rap, edm, korean lyrics"
     assert first["gender"] == "남성"   # 'male vocal'
 
-    names = sorted(p.name for p in songs.iterdir())
+    names = sorted(p.name for p in songs.iterdir() if not p.name.startswith("."))
     for title in ("You Were Already There", "Un'Estate Soltanto"):
         assert {f"{title}.mp3", f"{title}.wav", f"{title}.lrc", f"{title}.jpeg",
                 f"{title}_구간라벨.txt", f"{title}_가사본문.txt",
@@ -223,7 +223,7 @@ def test_classical_flow_and_resume(tmp_path):
     assert c["instrumental"] and c["lyrics"] == ""
     assert c["title"] == "Warm Socks, Slow Morning" and c["gender"] == "여성"   # 클래식은 무조건 여성
     assert c["style"].endswith("[Outro] (gentle cadence, slowly fading)")
-    assert len(list(songs.iterdir())) == 10
+    assert len([p for p in songs.iterdir() if not p.name.startswith(".")]) == 10
     # 다시 실행하면 이미 받은 곡은 건너뜀
     _, state2 = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
     assert state2["created"] == []   # 곡 만들기를 누르지 않음
@@ -240,12 +240,12 @@ def test_mastering_long_take_only(tmp_path):
     assert second["mastered"] == [{"id": 2, "style": "밝고 선명한"}]
     assert (songs / f"{title}_mastered.wav").read_text() == f"mastered 밝고 선명한 {title}#2"
     assert not (songs / f"{title} (1)_mastered.wav").exists()
-    assert len(list(songs.iterdir())) == 11
+    assert len([p for p in songs.iterdir() if not p.name.startswith(".")]) == 11
 
     # 처음부터 마스터링 함: 11개, 긴 곡(210초, 2번째 줄 = id 4)만 마스터링
     (tmp_path / "b").mkdir()
     songs2, state = run_mock(tmp_path / "b", one_song, "칸쏘네2.md", "160,210", masters=(1,))
-    assert len(list(songs2.iterdir())) == 11
+    assert len([p for p in songs2.iterdir() if not p.name.startswith(".")]) == 11
     assert state["mastered"] == [{"id": 2, "style": "밝고 선명한"}]
 
 
@@ -255,4 +255,19 @@ def test_reuse_songs_already_made(tmp_path):
     songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", masters=(0, 0),
                                       between=lambda out: [p.unlink() for p in out.iterdir()])
     assert len(first["created"]) == 1 and second["created"] == first["created"]
-    assert len(list(songs.iterdir())) == 10
+    assert len([p for p in songs.iterdir() if not p.name.startswith(".")]) == 10
+
+
+def test_resume_missing_lyrics_and_mastering(tmp_path):
+    """wav 는 받았는데 텍스트 가사·마스터링이 빠진 곡은, 다시 실행하면 빠진 것만 받는다."""
+    one_song = POP_MD.split("# Track 2.")[0]
+    title = "You Were Already There"
+
+    def drop(out):
+        (out / f"{title}_가사본문.txt").unlink()
+        (out / f"{title}_mastered.wav").unlink()
+    songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", masters=(1, 1), between=drop)
+    assert len(second["created"]) == 1                      # 새로 만들지 않음
+    assert len(second["mastered"]) == 2 and second["mastered"][1] == second["mastered"][0]   # 같은 긴 곡
+    assert (songs / f"{title}_가사본문.txt").read_text().startswith("가사 본문만")
+    assert len(list(p for p in songs.iterdir() if not p.name.startswith("."))) == 11
