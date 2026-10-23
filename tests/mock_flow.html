@@ -25,7 +25,7 @@
 <div id="side">
   <div>바하2</div>
   <div>전체 미디어</div><div>이미지</div><div>동영상</div>
-  <div>라이브러리 <button>add</button></div>
+  <div><span>라이브러리</span> <button id="libPlus"><svg width="12" height="12"></svg></button></div>
   <div id="lib"></div>
 </div>
 <div id="topbar" style="position:fixed;left:400px;top:12px"><input placeholder="" style="width:500px">
@@ -225,7 +225,11 @@ function onKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); 
 prompt.addEventListener("keydown", onKey);
 document.getElementById("send").onclick = submit;
 
+document.getElementById("libPlus").onclick = () => {   // 라이브러리 [+]: 바로 새 컬렉션
+  items.unshift({id: nextId++, kind: "collection", members: []}); draw();
+};
 document.getElementById("plus").onclick = () => {
+  if (params.get("plusbroken") === "1") return;   // 위쪽 [+] 메뉴가 안 뜨는 경우
   closeMenus();
   const m = document.createElement("div");
   m.className = "menu"; m.style.right = "20px"; m.style.top = "40px";

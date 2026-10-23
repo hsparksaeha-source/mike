@@ -73,7 +73,7 @@ def test_reuse_existing_images(tmp_path):
         browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
         context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
         page = context.new_page()
-        page.goto(f"{MOCK}?delay=300")
+        page.goto(f"{MOCK}?delay=300&plusbroken=1")   # 위쪽 [+] 가 안 되면 라이브러리 [+] 로
         # 지난번에 이미지만 만들어 둔 상태를 흉내: 이미지 15장 요청
         flow = flow_maker.Flow(page)
         flow.send_prompt("photorealistic test 15장")

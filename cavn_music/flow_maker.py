@@ -373,35 +373,82 @@ class Flow:
                 except PlaywrightError:
                     label = ""
                 top.append((box["x"], label, el))
-        if not top:
-            raise RuntimeError("화면 맨 위 줄의 [+] 버튼을 찾지 못했습니다.")
-        # 이름으로 고르면 에이전트 창의 '새 세션' 같은 버튼이 걸리므로, 위치로만 고른다: 무리의 맨 왼쪽 = [+]
-        plus = min(top, key=lambda t: t[0])[2]
-        plus.click()
-        # 메뉴 항목 글자에 아이콘 이름이 붙어 있을 수 있어서 '새 컬렉션'이 들어 있는 가장 작은 항목을 누른다
+        # 맨 왼쪽부터 하나씩 눌러 보고 '새 컬렉션' 메뉴가 뜨는 버튼을 쓴다 (아니면 Esc 로 닫고 다음 버튼).
+        # 그래도 안 되면 왼쪽 '라이브러리' 옆 [+]. 무엇을 눌렀고 무엇이 떴는지 까만 창에 남긴다.
+        tried = []
         item = None
-        for _ in range(10):
-            time.sleep(0.5)
-            found = []
-            for loc in (page.get_by_role("menuitem", name=re.compile("새 컬렉션")),
-                        page.get_by_text(re.compile("새 컬렉션"))):
-                for el, box in self._visible_boxes(loc):
-                    found.append((box["width"] * box["height"], el))
-                if found:
-                    break
-            if found:
-                item = min(found, key=lambda t: t[0])[1]
+        for x, label, el in sorted(top, key=lambda t: t[0])[:3]:
+            try:
+                el.click(timeout=3000)
+            except PlaywrightError:
+                continue
+            item = self._find_menu_item("새 컬렉션")
+            tried.append(f"x={int(x)} '{label[:15]}' → {self._menu_texts() or '메뉴 없음'}")
+            if item:
                 break
-        if item is None:
             page.keyboard.press("Escape")
-            raise RuntimeError("[+] 메뉴에서 '새 컬렉션'을 찾지 못했습니다.")
-        item.click()
+            time.sleep(0.6)
+        if item is None:
+            item = self._library_plus()
+            if item is not None:
+                tried.append("왼쪽 라이브러리 [+]")
+        log("    [+] 시도: " + " / ".join(tried or ["화면 맨 위 줄 버튼 없음"]))
+        if item is None:
+            raise RuntimeError("'새 컬렉션' 메뉴를 찾지 못했습니다.")
+        if item is not True:   # True = 라이브러리 [+] 가 메뉴 없이 바로 컬렉션을 만든 경우
+            item.click()
         for _ in range(20):
             time.sleep(0.5)
             cols = self.tiles("collection")
             if len(cols) > before:
                 return cols[0]["key"]   # 새 컬렉션은 격자 맨 앞에 생김
         raise RuntimeError("새 컬렉션이 만들어지지 않았습니다.")
+
+    def _find_menu_item(self, text, wait=3):
+        """열린 메뉴에서 text 가 들어 있는 가장 작은 항목 (아이콘 이름이 붙어 있어도 됨)."""
+        page = self.page
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            time.sleep(0.5)
+            for loc in (page.get_by_role("menuitem", name=re.compile(text)), page.get_by_text(re.compile(text))):
+                found = [(box["width"] * box["height"], el) for el, box in self._visible_boxes(loc)]
+                if found:
+                    return min(found, key=lambda t: t[0])[1]
+        return None
+
+    def _menu_texts(self):
+        texts = []
+        for el, _ in self._visible_boxes(self.page.locator("[role=menu], [role=menuitem], [role=dialog]"))[:6]:
+            try:
+                t = el.evaluate("e => (e.innerText || '').replace(/\\s+/g, ' ').trim()", timeout=2000)
+            except PlaywrightError:
+                t = ""
+            if t:
+                texts.append(t[:40])
+        return ", ".join(texts)
+
+    def _library_plus(self):
+        """왼쪽 '라이브러리' 글씨와 같은 줄의 [+]. 메뉴가 뜨면 '새 컬렉션' 항목, 바로 만들어지면 True."""
+        page = self.page
+        labels = self._visible_boxes(page.get_by_text(re.compile(r"^\s*라이브러리\s*$")))
+        if not labels:
+            return None
+        _, lab = labels[0]
+        cy = lab["y"] + lab["height"] / 2
+        before = len(self.tiles("collection"))
+        for el, box in self._visible_boxes(page.locator("button, [role=button]")):
+            if abs(box["y"] + box["height"] / 2 - cy) < 20 and box["x"] > lab["x"] + lab["width"] and box["x"] < lab["x"] + 400:
+                try:
+                    el.click(timeout=3000)
+                except PlaywrightError:
+                    continue
+                item = self._find_menu_item("새 컬렉션", wait=2)
+                if item is not None:
+                    return item
+                if len(self.tiles("collection")) > before:
+                    return True
+                page.keyboard.press("Escape")
+        return None
 
     def hover_menu(self, key):
         """칸에 마우스를 올리면 나오는 [⋮] 를 누른다."""
