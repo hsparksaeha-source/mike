@@ -162,7 +162,7 @@ def test_parse_classical():
     assert t.exclude == "drum kit, vocal, harpsichord"
 
 
-def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,)):
+def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,), between=None):
     """같은 브라우저(=같은 가짜 사이트 기록)에서 masters 개수만큼 이어서 실행한다."""
     md = tmp_path / md_name
     md.write_text(md_text, encoding="utf-8")
@@ -172,7 +172,9 @@ def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,)):
         browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
         context = browser.new_context(viewport={"width": 1600, "height": 1000}, accept_downloads=True)
         page = context.new_page()
-        for master in masters:
+        for n, master in enumerate(masters):
+            if n and between:
+                between(out / md.stem / "노래")
             cavn_maker.run(md, out, page=page, confirm=False, master=master,
                            create_url=f"{MOCK}?page=create&delay=1500&lengths={lengths}",
                            albums_url=f"{MOCK}?page=albums")
@@ -212,9 +214,7 @@ def test_pop_flow_on_mock(tmp_path):
     assert (songs / "You Were Already There.lrc").read_text().endswith("#" + long_id)
     assert (songs / "You Were Already There_구간라벨.txt").read_text().startswith("구간 라벨 유지")
     assert (songs / "You Were Already There_가사본문.txt").read_text().startswith("가사 본문만")
-    # 긴 곡을 먼저 받음
-    assert (songs / "You Were Already There.wav").stat().st_mtime < \
-        (songs / "You Were Already There (1).wav").stat().st_mtime
+
 
 
 def test_classical_flow_and_resume(tmp_path):
@@ -242,12 +242,17 @@ def test_mastering_long_take_only(tmp_path):
     assert not (songs / f"{title} (1)_mastered.wav").exists()
     assert len(list(songs.iterdir())) == 11
 
-    # 처음부터 마스터링 함: 긴 곡 6개 → 긴 곡 마스터링 → 짧은 곡 4개 순서
+    # 처음부터 마스터링 함: 11개, 긴 곡(210초, 2번째 줄 = id 4)만 마스터링
     (tmp_path / "b").mkdir()
     songs2, state = run_mock(tmp_path / "b", one_song, "칸쏘네2.md", "160,210", masters=(1,))
-    names = sorted(songs2.iterdir(), key=lambda p: p.stat().st_mtime)
-    order = [p.name for p in names]
-    assert len(order) == 11
-    assert order.index(f"{title}_mastered.wav") == 6
-    assert order[:6] == [f"{title}.mp3", f"{title}.wav", f"{title}.lrc", f"{title}_구간라벨.txt",
-                         f"{title}_가사본문.txt", f"{title}.jpeg"]
+    assert len(list(songs2.iterdir())) == 11
+    assert state["mastered"] == [{"id": 2, "style": "밝고 선명한"}]
+
+
+def test_reuse_songs_already_made(tmp_path):
+    """곡은 만들어졌는데 파일을 못 받은 경우, 다시 실행하면 새로 만들지 않고 그 2곡을 받는다."""
+    one_song = POP_MD.split("# Track 2.")[0]
+    songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", masters=(0, 0),
+                                      between=lambda out: [p.unlink() for p in out.iterdir()])
+    assert len(first["created"]) == 1 and second["created"] == first["created"]
+    assert len(list(songs.iterdir())) == 10

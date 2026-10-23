@@ -86,6 +86,23 @@ function record(key, value) { const list = load(key, []); list.push(value); stor
 function closeAll() { document.querySelectorAll(".menu,.dialog,.options").forEach(e => e.remove()); }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeAll(); });
 
+// 실제 CAVN 처럼: 파일을 준비한 뒤 [파일 다운로드] 버튼이 있는 창을 띄움
+function prepared(title, name, text) {
+  // Esc 로는 안 닫히고 오른쪽 위 X(글자 없는 아이콘 버튼)로만 닫힘, 화면 전체를 덮음
+  const d = document.createElement("div");
+  d.className = "prep";
+  d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50";
+  d.innerHTML = `<div style="position:absolute;left:30%;top:30%;background:#222;padding:20px">
+    <span>${title}</span> <button class="x"><svg width="10" height="10"></svg></button>
+    <div class="body">준비 중...</div></div>`;
+  d.querySelector(".x").onclick = () => d.remove();
+  document.body.appendChild(d);
+  setTimeout(() => {
+    d.querySelector(".body").innerHTML = `<div>✓ ${name}</div><button>파일 다운로드</button>`;
+    d.querySelector(".body button").onclick = () => download(name, text);
+  }, 800);
+}
+
 function download(name, text) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([text]));
@@ -128,7 +145,7 @@ if (page === "albums") {
       r.innerHTML = "<span>완료</span> <button>다운로드</button>";
       r.querySelector("button").onclick = () => {
         record("mastered", {id: s.id, style});
-        download(`${s.title}_mastered.wav`, `mastered ${style} ${s.title}#${s.id}`);
+        prepared("WAV 오디오 다운로드", `${s.title}_mastered.wav`, `mastered ${style} ${s.title}#${s.id}`);
       };
     }, 1000);
   };
@@ -202,7 +219,7 @@ if (page === "albums") {
       closeAll();
       const tag = `${s.title}#${s.id}`;
       if (item.startsWith("MP3")) download(`${s.title}.mp3`, `mp3 ${tag}`);
-      if (item.startsWith("WAV")) download(`${s.title}.wav`, "w".repeat(s.length * 10) + tag);
+      if (item.startsWith("WAV")) prepared("WAV 오디오 다운로드", `${s.title}.wav`, "w".repeat(s.length * 10) + tag);
       if (item.startsWith("스크롤")) download(`${s.title}.lrc`, `[00:01.00] ${tag}`);
       if (item.startsWith("곡 커버")) download(`${s.title}.jpeg`, `jpg ${tag}`);
       if (item.startsWith("가사 비디오") || item.startsWith("창작")) store("badClick", item);

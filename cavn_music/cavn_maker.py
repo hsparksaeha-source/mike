@@ -2,7 +2,7 @@
 
 md 파일 하나 = CAVN 앨범 하나 (앨범 이름 = md 파일 이름).
 곡마다: 커스텀 모드 → 제목·가사·음악 스타일·제외 스타일 입력 → [지금 만들기]
-        → 2곡 생성 대기 → 재생바에서 곡 길이 확인 → 긴 곡부터 다운로드
+        → 2곡 생성 대기 → 두 곡 다운로드 → wav 크기로 긴 곡/짧은 곡 정하기 → 긴 곡 마스터링
 
 저장 위치: <저장 폴더>\\<md 파일 이름>\\노래\\  (캡컷 조립 프로그램이 읽는 구조)
   긴 곡   제목.mp3 / 제목.wav / 제목.lrc / 제목_구간라벨.txt / 제목_가사본문.txt / 제목.jpg
@@ -488,17 +488,14 @@ class Cavn:
         for attempt in (1, 2):
             try:
                 self._open_menu(row)
-                with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as info:
-                    page.get_by_text(item, exact=True).filter(visible=True).last.click()
-                    if choice:
-                        self._click_dialog_choice(choice)
-                dl = info.value
+                dl = self._await_download(
+                    lambda: page.get_by_text(item, exact=True).filter(visible=True).last.click(), choice)
                 ext = Path(dl.suggested_filename).suffix or default_ext
                 dest = Path(str(dest_base) + ext.lower())
                 dl.save_as(dest)
                 self._close_overlays()
                 return dest
-            except (PlaywrightTimeout, PlaywrightError) as e:
+            except (PlaywrightTimeout, PlaywrightError, RuntimeError) as e:
                 self._close_overlays()
                 if attempt == 2:
                     log(f"    !! '{item}{' - ' + choice if choice else ''}' 받기 실패: {str(e).splitlines()[0]}")
@@ -506,6 +503,40 @@ class Cavn:
                         return self._save_cover_image(row, dest_base)
                     return None
                 time.sleep(3)
+
+    def _await_download(self, trigger, choice=None):
+        """trigger() 로 다운로드를 시작하고 받은 파일(download)을 돌려준다.
+        - 고르는 창(LRC, 구간 라벨 유지 …)이 뜨면 choice 버튼을 누른다.
+        - WAV·마스터링처럼 파일을 준비한 뒤 [파일 다운로드] 버튼이 있는 창이 뜨면 그 버튼을 누른다.
+        - 저장 폴더를 묻는 윈도우 창이 뜨지 않도록, 사이트가 '저장 위치 고르기' 기능을 못 쓰게 막는다
+          (그러면 보통 다운로드로 받아지고, 프로그램이 정해진 폴더에 저장한다)."""
+        page = self.page
+        got = []
+
+        def on_download(dl):
+            got.append(dl)
+        page.on("download", on_download)
+        try:
+            page.evaluate("""() => { for (const o of [window, Window.prototype]) {
+                try { delete o.showSaveFilePicker; } catch (e) {} } }""")
+            trigger()
+            if choice:
+                self._click_dialog_choice(choice)
+            deadline = time.time() + DOWNLOAD_TIMEOUT_MS / 1000
+            last_click = 0
+            while not got and time.time() < deadline:
+                if time.time() - last_click > 15:
+                    ready = [b for b in page.get_by_role("button", name=re.compile("파일 다운로드")).all()
+                             if b.is_visible() and b.is_enabled()]
+                    if ready:
+                        ready[-1].click()
+                        last_click = time.time()
+                time.sleep(1)
+            if not got:
+                raise RuntimeError("다운로드가 시작되지 않았습니다.")
+            return got[0]
+        finally:
+            page.remove_listener("download", on_download)
 
     def _click_dialog_choice(self, choice):
         """메뉴 항목을 누른 뒤 고르는 창이 뜨면 해당 버튼을 누른다 (안 뜨면 그냥 넘어감)."""
@@ -516,12 +547,39 @@ class Cavn:
             pass
 
     def _close_overlays(self):
+        """열린 메뉴·다운로드 창 닫기. 창이 남아 있으면 다음 메뉴를 가려서 못 누르게 된다."""
+        page = self.page
         for _ in range(2):
             try:
-                self.page.keyboard.press("Escape")
+                page.keyboard.press("Escape")
             except PlaywrightError:
                 pass
             time.sleep(0.3)
+        # Esc 로 안 닫히는 다운로드 창은 오른쪽 위 닫기(X)
+        for _ in range(3):
+            still = [b for b in page.get_by_role("button", name=re.compile("파일 다운로드")).all() if b.is_visible()]
+            if not still:
+                return
+            box = still[-1].evaluate_handle("""b => {
+                let d = b;
+                for (let i = 0; i < 8 && d.parentElement; i++) {
+                    d = d.parentElement;
+                    const c = [...d.querySelectorAll('button, [role=button]')].find(x =>
+                        x !== b && /닫기|close|^\\s*[×✕xX]\\s*$/i.test((x.getAttribute('aria-label') || '') + ' ' + (x.innerText || '')));
+                    if (c) return c;
+                    const icon = [...d.querySelectorAll('button')].find(x => x !== b && !(x.innerText || '').trim());
+                    if (icon) return icon;   // 글자 없는 아이콘 버튼 = X
+                }
+                return null;
+            }""").as_element()
+            try:
+                if box:
+                    box.click(timeout=3000)
+                else:
+                    page.mouse.click(5, 5)   # 창 바깥을 눌러 닫기
+            except PlaywrightError:
+                page.mouse.click(5, 5)
+            time.sleep(0.5)
 
     def _save_cover_image(self, row, dest_base):
         src = row.locator("img").first.get_attribute("src")
@@ -562,10 +620,9 @@ class Cavn:
         else:
             raise RuntimeError("마스터링이 제한 시간 안에 끝나지 않았습니다.")
         time.sleep(1)
-        with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as info:
-            download_btn.first.click()
-            self._click_dialog_choice("WAV")  # 형식을 고르는 창이 뜨면 WAV
-        dl = info.value
+        # 형식을 고르는 창이 뜨면 WAV, [파일 다운로드] 창이 뜨면 그 버튼
+        dl = self._await_download(lambda: download_btn.first.click(), "WAV")
+        self._close_overlays()
         ext = (Path(dl.suggested_filename).suffix or ".wav").lower()
         dest = Path(str(dest_base) + ext)
         dl.save_as(dest)
@@ -608,40 +665,36 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
     if len(style) > STYLE_MAX_LEN:
         raise RuntimeError(f"음악 스타일이 {len(style)}자라 {STYLE_MAX_LEN}자를 넘습니다. md 파일을 줄여 주세요.")
 
-    before = len(cavn.song_rows(title))
-    cavn.fill_form(track, title, style, track.lyrics_box())
-    cavn.click_create()
-    log("  [지금 만들기] 누름. 2곡 생성 기다리는 중...")
-    rows = cavn.wait_new_rows(title, before)
-
-    lengths = [cavn.song_length(r) for r in rows]
-    log(f"  곡 길이: {', '.join(f'{s // 60}:{s % 60:02d}' if s else '?' for s in lengths)}")
-
-    if all(lengths) and lengths[0] != lengths[1]:
-        long_i = 0 if lengths[0] > lengths[1] else 1
-        log("  긴 곡 받기")
-        download_song(cavn, rows[long_i], long_base, LONG_ITEMS)
-        if master:   # 긴 곡 6개 → 바로 긴 곡 마스터링 → 짧은 곡 4개 (합계 11개)
-            master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
-        log("  짧은 곡 받기")
-        rows = cavn.song_rows(title)[:2]   # 마스터링 화면을 다녀왔으니 다시 찾음 (순서는 그대로)
-        download_song(cavn, rows[1 - long_i], short_base, AUDIO_ITEMS)
-        return
+    existing = cavn.song_rows(title)
+    if len(existing) >= 2 and all(cavn.row_ready(r) for r in existing[:2]):
+        # 지난번에 만들어 놓고 못 받은 곡 → 크레딧을 다시 쓰지 않도록 새로 만들지 않고 그 2곡을 받는다
+        log("  앨범에 이 제목의 곡이 이미 2개 있어서, 새로 만들지 않고 그 곡을 받습니다.")
+        rows = existing[:2]
     else:
-        # 길이를 못 읽었으면: 둘 다 임시 이름으로 받고 wav 크기(=길이)로 긴 곡을 정한다
-        log("  재생바에서 길이를 못 읽어 wav 파일 크기로 긴 곡을 정합니다.")
-        tmp = out_dir / ".받는중"
-        tmp.mkdir(exist_ok=True)
-        for i, row in enumerate(rows):
-            download_song(cavn, row, tmp / f"{fname}__{i}", AUDIO_ITEMS)
-        sizes = [_size(tmp / f"{fname}__{i}.wav") for i in range(2)]
-        long_i = 0 if sizes[0] >= sizes[1] else 1
-        for i, base in ((long_i, long_base), (1 - long_i, short_base)):
-            for f in sorted(tmp.glob(f"{glob_escape(fname)}__{i}.*")):
-                shutil.move(str(f), str(base) + f.suffix)
-        shutil.rmtree(tmp, ignore_errors=True)
-        log("  긴 곡 가사 받기")
-        download_song(cavn, rows[long_i], long_base, TEXT_LYRIC_ITEMS)
+        cavn.fill_form(track, title, style, track.lyrics_box())
+        cavn.click_create()
+        log("  [지금 만들기] 누름. 2곡 생성 기다리는 중...")
+        rows = cavn.wait_new_rows(title, len(existing))
+
+    # 긴 곡/짧은 곡은 wav 파일 크기로 정한다 (두 곡 모두 같은 형식이라 큰 파일 = 긴 곡).
+    # 재생바로 길이를 읽는 것보다 정확하고, 곡을 재생하지 않아도 된다.
+    tmp = out_dir / ".받는중"
+    tmp.mkdir(exist_ok=True)
+    for i, row in enumerate(rows):
+        log(f"  {i + 1}번째 곡 받기")
+        download_song(cavn, row, tmp / f"{fname}__{i}", AUDIO_ITEMS)
+    sizes = [_size(tmp / f"{fname}__{i}.wav") for i in range(2)]
+    if not all(sizes):
+        log("  !! wav 를 다 받지 못해 긴 곡을 정할 수 없습니다. 받은 파일은 .받는중 폴더에 있습니다.")
+        raise RuntimeError("wav 다운로드 실패")
+    long_i = 0 if sizes[0] >= sizes[1] else 1
+    log(f"  wav 크기: {sizes[0] // 1024:,}KB / {sizes[1] // 1024:,}KB → {long_i + 1}번째 곡이 긴 곡")
+    for i, base in ((long_i, long_base), (1 - long_i, short_base)):
+        for f in sorted(tmp.glob(f"{glob_escape(fname)}__{i}.*")):
+            shutil.move(str(f), str(base) + f.suffix)
+    shutil.rmtree(tmp, ignore_errors=True)
+    log("  긴 곡 텍스트 가사 받기")
+    download_song(cavn, rows[long_i], long_base, TEXT_LYRIC_ITEMS)
 
     if master:
         master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
