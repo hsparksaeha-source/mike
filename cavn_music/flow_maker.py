@@ -122,7 +122,7 @@ TILES_JS = """(box) => {
 class Flow:
     def __init__(self, page):
         self.page = page
-        self.approved_seen = 0   # 지금까지 화면에 보인 [승인] 버튼 수 (새로 생긴 질문만 승인)
+        self.approved_seen = 0   # 이미 처리한 확인 질문 수 (새로 생긴 질문만 승인)
 
     # -- 프롬프트 칸
     def prompt_box(self, wait=30):
@@ -180,7 +180,7 @@ class Flow:
 
     def send_prompt(self, text):
         # 보내기 직전의 [승인] 버튼 수를 기준으로, 이 요청에 새로 생기는 질문만 승인한다
-        self.approved_seen = len(self._approve_buttons())
+        self.approved_seen = len(self._questions())
         box = self.prompt_box()
         box.click()
         self.page.keyboard.insert_text(text)
@@ -226,27 +226,41 @@ class Flow:
             self.tiles()
         return self.page.locator(f"[data-cavn-tile={_css_str(key)}]").first
 
-    def _approve_buttons(self):
-        buttons = []
-        for b in self.page.get_by_role("button", name=re.compile(r"^\W*(check\s*)?승인\s*$")).all():
+    def _visible_boxes(self, loc):
+        out = []
+        for el in loc.all():
             try:
-                if b.is_visible() and b.is_enabled():
-                    buttons.append(b)
+                box = el.bounding_box() if el.is_visible() else None
             except PlaywrightError:
-                pass
-        return buttons
+                box = None
+            if box:
+                out.append((el, box))
+        return out
+
+    def _questions(self):
+        """에이전트 확인 질문마다 하나씩 있는 [거부] 칸들 (화면 순서)."""
+        return self._visible_boxes(self.page.get_by_text(re.compile(r"^\s*(close\s*)?거부\s*$")))
 
     def approve(self):
         """에이전트가 'N 크레딧을 사용하여 … 시작하시겠습니까?' 하고 물으면 [승인]을 누른다 ([항상 승인] 아님).
-        대화 창에 예전 질문의 버튼과 '승인' 말풍선이 남아 있으므로, [승인] 버튼이 새로 늘었을 때만 한 번 누른다."""
-        buttons = self._approve_buttons()
-        if len(buttons) <= self.approved_seen:
+        승인 칸은 '버튼' 표시가 없을 수 있고, 대화 창에 예전 질문과 '승인' 말풍선도 남아 있어서
+        → 새로 생긴 질문의 [거부] 칸을 찾고, 그 바로 위에 있는 [승인] 칸을 누른다."""
+        questions = self._questions()
+        if len(questions) <= self.approved_seen:
+            return False
+        _, deny = questions[-1]
+        best = None
+        for el, box in self._visible_boxes(self.page.get_by_text(re.compile(r"^\s*(check\s*)?승인\s*$"))):
+            dy = deny["y"] - box["y"]
+            if 0 < dy < 260 and abs(box["x"] - deny["x"]) < 120 and (best is None or dy < best[0]):
+                best = (dy, el)
+        if not best:
             return False
         try:
-            buttons[-1].click(timeout=3000)   # 가장 최근 질문의 [승인]
+            best[1].click(timeout=3000)
         except PlaywrightError:
             return False
-        self.approved_seen = len(buttons)
+        self.approved_seen = len(questions)
         log("    에이전트 확인 질문에 [승인]을 눌렀습니다.")
         return True
 

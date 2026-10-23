@@ -192,11 +192,11 @@ function submit() {
     // 질문과 버튼은 승인한 뒤에도 대화 창에 그대로 남고, '승인' 말풍선과 영상 미리보기가 붙는다
     const ask = document.createElement("div");
     ask.innerHTML = `<p>15 크레딧을 사용하여 1개 동영상 생성을 시작하시겠습니까?</p>
-      <div role="button" class="ok">check 승인</div><div role="button" class="always">check 항상 승인</div>
-      <div role="button" class="no">close 거부</div>`;
+      <div class="ok"><span>check</span> <span>승인</span></div><div class="always"><span>check</span> <span>항상 승인</span></div>
+      <div class="no"><span>close</span> <span>거부</span></div>`;
     chat.appendChild(ask);
     ask.querySelector(".always").onclick = () => { window.alwaysClicked = true; };
-    ask.querySelector(".ok").onclick = () => {
+    ask.querySelector(".ok").onclick = () => {   // 안쪽 '승인' 글씨를 눌러도 이 칸으로 전달됨
       window.approved = (window.approved || 0) + 1;
       if (window.approved > window.requests.filter(r => r.attachment).length) return;   // 같은 질문 또 누름
       chat.insertAdjacentHTML("beforeend", "<div class='bubble'>승인</div>");
