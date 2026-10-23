@@ -266,8 +266,11 @@ def test_resume_missing_lyrics_and_mastering(tmp_path):
     def drop(out):
         (out / f"{title}_가사본문.txt").unlink()
         (out / f"{title}_mastered.wav").unlink()
+        (out / f"{title} (1).lrc").unlink()   # 짧은 곡 lrc 도 빠짐
     songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", masters=(1, 1), between=drop)
     assert len(second["created"]) == 1                      # 새로 만들지 않음
     assert len(second["mastered"]) == 2 and second["mastered"][1] == second["mastered"][0]   # 같은 긴 곡
     assert (songs / f"{title}_가사본문.txt").read_text().startswith("가사 본문만")
+    short_id = (songs / f"{title} (1).wav").read_text().split("#")[-1]
+    assert (songs / f"{title} (1).lrc").read_text().endswith("#" + short_id)   # 짧은 곡의 lrc
     assert len(list(p for p in songs.iterdir() if not p.name.startswith("."))) == 11

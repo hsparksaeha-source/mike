@@ -689,9 +689,10 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
         if long_i is None:   # 기록이 없으면 재생바 길이로
             lengths = [cavn.song_length(r) for r in rows]
             long_i = 0 if (lengths[0] or 0) >= (lengths[1] or 0) else 1
-        missing = [it for it in TEXT_LYRIC_ITEMS if not Path(str(long_base) + it[2] + it[3]).exists()]
-        if missing:
-            download_song(cavn, rows[long_i], long_base, missing)
+        for i, base, items in ((long_i, long_base, LONG_ITEMS), (1 - long_i, short_base, AUDIO_ITEMS)):
+            missing = [it for it in items if not has_file(base, it)]
+            if missing:
+                download_song(cavn, rows[i], base, missing)
         if master:
             master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
         return
@@ -766,9 +767,21 @@ def status(out_dir, title, master=0):
         return "todo"
     if master and not (out_dir / f"{fname}_mastered.wav").exists():
         return "need_extra"
-    if not all((out_dir / f"{fname}{tail}{ext}").exists() for _, _, tail, ext in TEXT_LYRIC_ITEMS):
+    long_base, short_base = out_dir / fname, out_dir / f"{fname} (1)"
+    if not all(has_file(long_base, it) for it in LONG_ITEMS) or \
+            not all(has_file(short_base, it) for it in AUDIO_ITEMS):
         return "need_extra"
     return "done"
+
+
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def has_file(base, item):
+    """받을 항목(item)의 파일이 이미 있는지. 곡 커버는 jpg/png 등 아무 이미지 확장자나."""
+    _, _, tail, ext = item
+    exts = IMAGE_EXTS if ext in IMAGE_EXTS else (ext,)
+    return any(Path(str(base) + tail + e).exists() for e in exts)
 
 
 STATE_FILE = ".긴곡기록.json"   # 제목마다 목록에서 몇 번째 줄이 긴 곡이었는지 (빠진 파일을 이어 받을 때 씀)
@@ -837,7 +850,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
     print(f"\nmd 파일 : {md_path.name}\n앨범    : {album}\n종류    : {kind}\n저장 폴더: {out_dir}")
     print(f"AI 마스터링: {MASTER_CHOICES[master]}\n")
     todo = []
-    marks = {"done": "완료(건너뜀)", "need_extra": "빠진 파일만 받음"}
+    marks = {"done": "완료(건너뜀)", "need_extra": "빠진 파일만 받음 (곡은 새로 만들지 않음)"}
     for t in tracks:
         style_len = len(t.style_box(POP_STYLE_INCLUDES_GENRE))
         state = status(out_dir, t.title, master)
