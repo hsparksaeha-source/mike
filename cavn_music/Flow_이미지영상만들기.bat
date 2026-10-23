@@ -17,6 +17,13 @@ if "%MD%"=="" (
   exit /b 1
 )
 :run
-python -u flow_maker.py "%MD%"
+echo.
+echo 만들 트랙 번호를 입력하세요. (예: 1  또는  1,3,5)
+echo 그냥 Enter 를 누르면 전체를 만듭니다.
+set "ONLY="
+set /p ONLY=트랙 번호:
+set "ONLYARG="
+if not "%ONLY%"=="" set ONLYARG=--only "%ONLY%"
+python -u flow_maker.py "%MD%" %ONLYARG%
 echo.
 pause
