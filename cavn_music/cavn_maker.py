@@ -35,7 +35,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
-from md_parser import STYLE_MAX_LEN, parse_md_file  # noqa: E402
+from md_parser import ask_md_path, ask_only, parse_only, STYLE_MAX_LEN, parse_md_file  # noqa: E402
 from thumb_agent.browser import start_real_chrome  # noqa: E402
 
 CREATE_URL = "https://cavn.ai/create"
@@ -685,15 +685,16 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
 
 def main():
     ap = argparse.ArgumentParser(description="CAVN AI 자동 곡 생성 + 다운로드")
-    ap.add_argument("md", help="Claude가 만든 음악 md 파일")
+    ap.add_argument("md", nargs="?", help="Claude가 만든 음악 md 파일 (없으면 실행할 때 물어봄)")
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--only", help="이 트랙 번호만 (예: 1,3,5)")
     ap.add_argument("--master", type=int, choices=[0, 1, 2],
                     help="앨범 전체 AI 마스터링 0=안 함, 1=긴 곡만, 2=두 곡 모두 (안 주면 시작할 때 물어봄)")
     ap.add_argument("--dry-run", action="store_true", help="md 파일만 읽어 보고 끝냄")
     args = ap.parse_args()
-    only = {int(x) for x in re.findall(r"\d+", args.only)} if args.only else None
-    run(args.md.strip('"'), args.out, only, args.dry_run, master=args.master)
+    md = ask_md_path(args.md)
+    only = parse_only(args.only) if args.only else (None if args.dry_run else ask_only())
+    run(md, args.out, only, args.dry_run, master=args.master)
 
 
 if __name__ == "__main__":

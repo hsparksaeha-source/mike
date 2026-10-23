@@ -32,7 +32,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
-from md_parser import parse_md_file  # noqa: E402
+from md_parser import ask_md_path, ask_only, parse_only, parse_md_file  # noqa: E402
 from thumb_agent.browser import start_real_chrome  # noqa: E402
 
 FLOW_URL = "https://flow.google.com/"
@@ -480,14 +480,15 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
 
 def main():
     ap = argparse.ArgumentParser(description="Google Flow 이미지 15장 + 영상 1개 자동 만들기")
-    ap.add_argument("md", help="Claude가 만든 음악 md 파일")
+    ap.add_argument("md", nargs="?", help="Claude가 만든 음악 md 파일 (없으면 실행할 때 물어봄)")
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--only", help="이 트랙 번호만 (예: 1,3,5)")
     ap.add_argument("--images", type=int, default=IMAGES_PER_TRACK, help="트랙마다 이미지 장수 (기본 15)")
     ap.add_argument("--dry-run", action="store_true", help="md 파일만 읽어 보고 끝냄")
     args = ap.parse_args()
-    only = {int(x) for x in re.findall(r"\d+", args.only)} if args.only else None
-    run(args.md.strip('"'), args.out, only, args.dry_run, n_images=args.images)
+    md = ask_md_path(args.md)
+    only = parse_only(args.only) if args.only else (None if args.dry_run else ask_only())
+    run(md, args.out, only, args.dry_run, n_images=args.images)
 
 
 if __name__ == "__main__":

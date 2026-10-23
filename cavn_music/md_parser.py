@@ -145,3 +145,26 @@ if __name__ == "__main__":
         print(f"[{t.number}] {t.title}  ({kind}, 스타일 {len(t.style_box())}자, 가사 {len(t.lyrics_box())}자)")
         for w in t.warnings:
             print("    !!", w)
+
+
+# ---------------------------------------------------------------- 실행할 때 묻기 (bat 파일에는 한글을 쓰지 않음)
+
+def ask_md_path(given=None):
+    """md 파일 경로. 없으면 까만 창에 끌어다 놓게 한다."""
+    path = (given or "").strip().strip('"')
+    while not path or not Path(path).is_file():
+        if path:
+            print(f"!! 파일을 찾지 못했습니다: {path}")
+        path = input("음악 md 파일을 이 창에 끌어다 놓고 Enter 를 누르세요: ").strip().strip('"').strip("'")
+    return path
+
+
+def parse_only(text):
+    """'1,3,5' -> {1, 3, 5}, 빈 칸 -> None(전체)"""
+    nums = {int(x) for x in re.findall(r"\d+", text or "")}
+    return nums or None
+
+
+def ask_only():
+    print("\n만들 트랙 번호를 입력하세요. (예: 1  또는  1,3,5)")
+    return parse_only(input("그냥 Enter 를 누르면 전체를 만듭니다. 트랙 번호: "))
