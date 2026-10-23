@@ -165,19 +165,32 @@ class Cavn:
         actual = box.input_value().strip() or name
         if actual != name:
             log(f"  (앨범 이름 글자 수 제한 때문에 '{actual}' 로 저장됩니다)")
-        time.sleep(0.5)
-        buttons = [b for b in page.get_by_role("button", name="만들기", exact=True).all()
-                   if b.is_visible() and b.is_enabled()]
-        if buttons:
-            buttons[-1].click()
-        else:
-            box.press("Enter")
-        # 창이 닫히면 만들어진 것
-        for _ in range(30):
-            time.sleep(0.5)
-            if not box.is_visible():
-                time.sleep(1)
-                return actual
+        time.sleep(0.8)
+        # [만들기] 버튼을 여러 방법으로 눌러 본다. 창이 닫히면 만들어진 것.
+        attempts = [
+            lambda: page.get_by_role("button", name=re.compile(r"^\s*만들기\s*$")),
+            lambda: page.get_by_text(re.compile(r"^\s*만들기\s*$")),
+            lambda: page.locator("button").filter(has_text=re.compile(r"^\s*만들기\s*$")),
+        ]
+        for attempt in attempts + [None]:
+            if attempt is None:
+                box.press("Enter")
+            else:
+                targets = [b for b in attempt().all() if b.is_visible()]
+                if not targets:
+                    continue
+                try:
+                    targets[-1].click(timeout=3000)   # 창 안의 버튼 = 화면에서 맨 나중 것
+                except PlaywrightError:
+                    try:
+                        targets[-1].click(force=True, timeout=3000)
+                    except PlaywrightError:
+                        continue
+            for _ in range(8):
+                time.sleep(0.5)
+                if not box.is_visible():
+                    time.sleep(1)
+                    return actual
         raise RuntimeError("[만들기]를 눌렀지만 앨범 만들기 창이 닫히지 않았습니다.")
 
     def _album_name_box(self):
