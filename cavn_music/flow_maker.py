@@ -209,11 +209,36 @@ class Flow:
             self.tiles()
         return self.page.locator(f"[data-cavn-tile={_css_str(key)}]").first
 
+    def approve(self):
+        """에이전트가 'N 크레딧을 사용하여 … 시작하시겠습니까?' 하고 물으면 [승인]을 누른다 ([항상 승인] 아님)."""
+        page = self.page
+        for loc in (page.get_by_role("button", name=re.compile(r"^\W*(check\s*)?승인\s*$")),
+                    page.get_by_text(re.compile(r"^\s*승인\s*$"))):
+            buttons = []
+            for b in loc.all():
+                try:
+                    if b.is_visible() and b.is_enabled():
+                        buttons.append(b)
+                except PlaywrightError:
+                    pass
+            if buttons:
+                try:
+                    buttons[-1].click(timeout=3000)   # 가장 최근 질문의 [승인]
+                    log("    에이전트 확인 질문에 [승인]을 눌렀습니다.")
+                    return True
+                except PlaywrightError:
+                    pass
+        return False
+
     def wait_new(self, kind, before_keys, want, timeout, settle=10):
         """kind 칸이 want 개 이상 새로 생기고 settle 초 동안 늘지 않을 때까지 기다린다."""
         deadline = time.time() + timeout
         last_count, last_change, last_note = -1, time.time(), 0
+        last_approve = 0
         while time.time() < deadline:
+            if time.time() - last_approve > 10 and self.approve():
+                last_approve = time.time()
+                last_change = time.time()
             new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
             if len(new) != last_count:
                 last_count, last_change = len(new), time.time()

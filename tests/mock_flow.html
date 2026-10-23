@@ -173,7 +173,18 @@ function submit() {
   attachment = null; document.getElementById("attach").innerHTML = "";
   const m = text.match(/(\d+)장/);
   if (att) {
-    setTimeout(() => { items.unshift({id: nextId++, kind: "video", label: "Drone video", from: att.id}); draw(); }, delay);
+    const ask = document.createElement("div");
+    ask.id = "agentAsk";
+    ask.style.cssText = "position:fixed;right:10px;top:80px;width:300px;background:#111;padding:10px;z-index:8";
+    ask.innerHTML = `<p>15 크레딧을 사용하여 1개 동영상 생성을 시작하시겠습니까?</p>
+      <div role="button" class="ok">check 승인</div><div role="button" class="always">check 항상 승인</div>
+      <div role="button" class="no">close 거부</div>`;
+    document.body.appendChild(ask);
+    ask.querySelector(".always").onclick = () => { window.alwaysClicked = true; };
+    ask.querySelector(".ok").onclick = () => {
+      ask.remove(); window.approved = (window.approved || 0) + 1;
+      setTimeout(() => { items.unshift({id: nextId++, kind: "video", label: "Drone video", from: att.id}); draw(); }, delay);
+    };
   } else if (m) {
     const n = Number(m[1]);
     for (let i = 0; i < n; i++) {   // 하나씩 생기고, 새 것이 앞에 붙는다
