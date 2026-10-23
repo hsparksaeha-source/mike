@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 Flow</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #000; color: #eee; }
+  #side { position: fixed; left: 0; top: 0; bottom: 0; width: 200px; padding: 10px; box-sizing: border-box; }
+  #top { position: fixed; right: 20px; top: 10px; }
+  #grid { position: absolute; left: 220px; top: 60px; right: 20px; bottom: 140px; overflow: auto; }
+  .tile { display: inline-block; position: relative; width: 240px; height: 135px; margin: 6px;
+          background: #333; border-radius: 10px; vertical-align: top; }
+  .tile img, .tile video { width: 240px; height: 135px; display: block; }
+  .tile .label { position: absolute; left: 8px; bottom: 6px; font-size: 12px; }
+  .tile .acts { position: absolute; right: 6px; top: 6px; display: none; }
+  .tile:hover .acts { display: block; }
+  .menu { position: fixed; background: #222; border: 1px solid #777; padding: 6px; z-index: 9; }
+  .menu div { padding: 4px 8px; cursor: pointer; }
+  #promptWrap { position: fixed; left: 35%; width: 30%; bottom: 20px; background: #222; padding: 10px; border-radius: 12px; }
+  #prompt { min-height: 40px; outline: none; }
+  #attach img { width: 60px; }
+</style>
+</head>
+<body>
+<div id="side">
+  <div>바하2</div>
+  <div>전체 미디어</div><div>이미지</div><div>동영상</div>
+  <div>라이브러리 <button>add</button></div>
+  <div id="lib"></div>
+</div>
+<div id="top"><button id="plus">add</button> <button>help</button> <button>settings</button></div>
+<div id="grid"></div>
+<div id="promptWrap">
+  <div id="attach"></div>
+  <div id="prompt" contenteditable="true" data-placeholder="무엇을 만들고 싶으신가요?"></div>
+  <button>add</button> <button id="agent">에이전트</button> <button id="send">arrow_forward</button>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const delay = Number(params.get("delay") || 800);
+const zipMode = params.get("zip") !== "0";   // 컬렉션을 zip 하나로 줄지, 낱개 파일로 줄지
+let items = [];        // {id, kind: image|video|collection, label, members}
+let nextId = 1;
+let attachment = null;
+let dragging = null;
+window.requests = [];
+window.collections = [];
+
+const svg = id => "data:image/svg+xml," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="135"><rect width="240" height="135" fill="#${(id * 999999 % 0xffffff).toString(16).padStart(6, "0")}"/><text x="10" y="70">${id}</text></svg>`);
+
+function closeMenus() { document.querySelectorAll(".menu").forEach(m => m.remove()); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenus(); });
+
+function crc32(buf) {
+  let crc = 0xFFFFFFFF;
+  for (let n = 0; n < buf.length; n++) {
+    let c = (crc ^ buf[n]) & 0xFF;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data), len = data.length;
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint32(14, crc, true);
+    h.setUint32(18, len, true); h.setUint32(22, len, true); h.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(h.buffer), name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true);
+    c.setUint32(16, crc, true); c.setUint32(20, len, true); c.setUint32(24, len, true);
+    c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+    central.push(new Uint8Array(c.buffer), name);
+    offset += 30 + name.length + len;
+  }
+  const size = central.reduce((a, b) => a + b.length, 0);
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, size, true); e.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(e.buffer)]);
+}
+function download(name, blob) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function openMenu(item, button) {
+  closeMenus();
+  const m = document.createElement("div");
+  m.className = "menu";
+  const r = button.getBoundingClientRect();
+  m.style.left = r.left + "px"; m.style.top = r.bottom + "px";
+  const entries = item.kind === "collection" ? ["즐겨찾기", "컬렉션 다운로드", "이름 바꾸기"] : ["즐겨찾기", "다운로드"];
+  m.innerHTML = entries.map(t => `<div>${t}</div>`).join("");
+  m.querySelectorAll("div").forEach(d => d.onclick = () => {
+    if (d.textContent === "컬렉션 다운로드") {
+      closeMenus();
+      const files = item.members.map(id => ({name: `image_${id}.jpg`, text: `image ${id}`}));
+      if (zipMode) download("collection.zip", makeZip(files));
+      else {
+        files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([f.text])), i * 50));
+        window.open("about:blank");   // 다운로드 때문에 새 창이 열리는 경우
+      }
+    }
+    if (d.textContent === "다운로드" && item.kind === "video") {
+      m.innerHTML = "<div role='menuitem'>원본 크기(720p)</div><div role='menuitem'>1080p로 업스케일</div>";
+      m.querySelector("div").onclick = () => { closeMenus(); download(`video_${item.id}.mp4`, new Blob([`video ${item.id}`])); };
+    }
+  });
+  document.body.appendChild(m);
+}
+
+function draw() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  items.forEach(item => {
+    const t = document.createElement("div");
+    t.className = "tile";
+    if (item.kind === "collection") {
+      t.innerHTML = `<div class="label">제목 없는 컬렉션 ${item.members.length ? item.members.length : ""}</div>`;
+      t.addEventListener("dragover", e => e.preventDefault());
+      t.addEventListener("drop", e => {
+        e.preventDefault();
+        if (dragging && dragging.kind === "image" && !item.members.includes(dragging.id)) item.members.push(dragging.id);
+        draw();
+      });
+    } else if (item.kind === "image") {
+      t.draggable = true;
+      t.innerHTML = `<img src="${svg(item.id)}" draggable="false"><div class="label">image ${item.label}</div>`;
+    } else {
+      t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id)}"></video>` +
+                    `<div class="label">play_circle ${item.label}</div>`;
+    }
+    t.innerHTML += `<div class="acts"><button>favorite</button><button class="more">more_vert</button></div>`;
+    t.addEventListener("dragstart", () => dragging = item);
+    t.querySelector(".more").onclick = e => openMenu(item, e.target);
+    grid.appendChild(t);
+  });
+  document.getElementById("lib").innerHTML =
+    items.filter(i => i.kind === "collection").map(() => "<div>제목 없는 컬렉션</div>").join("");
+  window.collections = items.filter(i => i.kind === "collection").map(i => [...i.members]);
+}
+
+const prompt = document.getElementById("prompt");
+const wrap = document.getElementById("promptWrap");
+wrap.addEventListener("dragover", e => e.preventDefault());
+wrap.addEventListener("drop", e => {
+  e.preventDefault();
+  if (dragging && dragging.kind === "image") {
+    attachment = dragging;
+    document.getElementById("attach").innerHTML = `<img src="${svg(dragging.id)}">`;
+  }
+});
+
+function submit() {
+  const text = prompt.innerText.trim();
+  if (!text) return;
+  window.requests.push({text, attachment: attachment && attachment.id});
+  prompt.innerText = "";
+  const att = attachment;
+  attachment = null; document.getElementById("attach").innerHTML = "";
+  const m = text.match(/(\d+)장/);
+  if (att) {
+    setTimeout(() => { items.unshift({id: nextId++, kind: "video", label: "Drone video", from: att.id}); draw(); }, delay);
+  } else if (m) {
+    const n = Number(m[1]);
+    for (let i = 0; i < n; i++) {   // 하나씩 생기고, 새 것이 앞에 붙는다
+      setTimeout(() => { items.unshift({id: nextId++, kind: "image", label: "Frozen lake"}); draw(); }, delay + i * 60);
+    }
+  }
+}
+prompt.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
+document.getElementById("send").onclick = submit;
+
+document.getElementById("plus").onclick = () => {
+  closeMenus();
+  const m = document.createElement("div");
+  m.className = "menu"; m.style.right = "20px"; m.style.top = "40px";
+  m.innerHTML = "<div>업로드</div><div>새 컬렉션</div><div>캐릭터 만들기</div><div>새로운 장면</div>";
+  m.querySelectorAll("div")[1].onclick = () => {
+    closeMenus(); items.unshift({id: nextId++, kind: "collection", members: []}); draw();
+  };
+  document.body.appendChild(m);
+};
+
+// 이전 작업물이 조금 있는 상태에서 시작
+items.push({id: nextId++, kind: "image", label: "old"}, {id: nextId++, kind: "collection", members: [1]});
+draw();
+</script>
+</body>
+</html>
