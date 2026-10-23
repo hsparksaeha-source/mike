@@ -355,15 +355,18 @@ class Flow:
     def new_collection(self):
         page = self.page
         before = len(self.tiles("collection"))
-        # 화면 맨 위 줄 오른쪽에 모인 버튼들(+, ?, ⚙, ⋮) 중 [+]. 그림만 있고 글자가 없을 수 있어서
-        # 'add/추가/만들기' 표시가 있으면 그것, 없으면 그 무리의 맨 왼쪽 버튼 (대화 창 입력칸의 + 말고)
+        # 화면 맨 위 줄, 검색칸 오른쪽에 모인 버튼들(+, ?, ⚙, ⋮, 그 오른쪽의 에이전트 창 버튼들) 중 맨 왼쪽 = [+]
+        # (그림만 있고 글자가 없어서 위치로 찾는다. 대화 창 입력칸의 + 와 '새 세션' 버튼은 아님)
         width = page.evaluate("innerWidth")
         # 검색칸 바로 옆의 필터 버튼은 빼려고, 검색칸 오른쪽 끝보다 충분히 오른쪽에 있는 버튼만 본다
-        search_right = max([b["x"] + b["width"] for _, b in self._visible_boxes(page.locator("input"))
-                            if b["y"] < 150] or [width * 0.55])
+        searches = [b for _, b in self._visible_boxes(page.locator("input")) if b["y"] < 200]
+        search = max(searches, key=lambda b: b["width"]) if searches else None
+        search_right = search["x"] + search["width"] if search else width * 0.55
+        row_y = search["y"] + search["height"] / 2 if search else 60   # 검색칸과 같은 가로줄 (에이전트 창 버튼은 그 아래)
         top = []
         for el, box in self._visible_boxes(page.locator("button, [role=button]")):
-            if box["y"] < 150 and box["x"] > search_right + 100 and box["width"] < 80:
+            same_row = abs(box["y"] + box["height"] / 2 - row_y) < 25
+            if same_row and box["x"] > search_right + 100 and box["width"] < 80:
                 try:
                     label = el.evaluate("e => ((e.getAttribute('aria-label') || '') + ' ' + (e.innerText || '')).trim()",
                                         timeout=2000)
@@ -372,8 +375,8 @@ class Flow:
                 top.append((box["x"], label, el))
         if not top:
             raise RuntimeError("화면 맨 위 줄의 [+] 버튼을 찾지 못했습니다.")
-        named = [t for t in top if re.search(r"^\+$|\badd\b|추가|만들기|새로|create|new", t[1], re.I)]
-        plus = min(named or top, key=lambda t: t[0])[2]
+        # 이름으로 고르면 에이전트 창의 '새 세션' 같은 버튼이 걸리므로, 위치로만 고른다: 무리의 맨 왼쪽 = [+]
+        plus = min(top, key=lambda t: t[0])[2]
         plus.click()
         # 메뉴 항목 글자에 아이콘 이름이 붙어 있을 수 있어서 '새 컬렉션'이 들어 있는 가장 작은 항목을 누른다
         item = None

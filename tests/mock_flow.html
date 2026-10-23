@@ -30,7 +30,7 @@
 </div>
 <div id="topbar" style="position:fixed;left:400px;top:12px"><input placeholder="" style="width:500px">
   <button title="filter"><svg width="12" height="12"></svg></button></div>
-<div id="top"><button id="plus"><svg width="14" height="14"></svg></button> <button><svg width="14" height="14"></svg></button>
+<div id="top" style="position:fixed;right:340px;top:12px"><button id="plus"><svg width="14" height="14"></svg></button> <button><svg width="14" height="14"></svg></button>
   <button><svg width="14" height="14"></svg></button> <button><svg width="14" height="14"></svg></button></div>
 <div id="grid"></div>
 <div id="promptWrap">
@@ -169,8 +169,10 @@ function panel() {
   if (!p) {
     p = document.createElement("div");
     p.id = "agentPanel";
-    p.style.cssText = "position:fixed;right:0;top:60px;bottom:0;width:320px;background:#111;z-index:8;overflow:auto";
-    p.innerHTML = `<div id="chat"></div>`;
+    p.style.cssText = "position:fixed;right:0;top:90px;bottom:0;width:320px;background:#111;z-index:8;overflow:auto";
+    p.innerHTML = `<div style="height:40px"><button aria-label="New session" class="ns"><svg width="14" height="14"></svg></button>
+      <button aria-label="닫기"><svg width="14" height="14"></svg></button></div><div id="chat"></div>`;
+    p.querySelector(".ns").onclick = () => { window.wrongMenu = "새 세션"; };
     document.body.appendChild(p);
     wrap.style.cssText = "position:static;width:auto;margin:6px;background:#222;padding:10px";
     p.appendChild(wrap);

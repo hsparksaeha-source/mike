@@ -36,9 +36,11 @@ def test_flow_two_tracks(tmp_path, zip_mode):
         requests = page.evaluate("window.requests")
         collections = page.evaluate("window.collections")
         approved = page.evaluate("[window.approved, window.alwaysClicked || false]")
+        wrong = page.evaluate("window.wrongMenu || null")
         browser.close()
 
     assert approved == [2, False]   # 영상마다 [승인]을 누름 ([항상 승인]은 안 누름)
+    assert wrong is None            # '새 세션'·'캐릭터 만들기'는 누르지 않음
     album = out / "낭만오케스트라3집"
     folder1, folder2 = album / "이미지" / "1", album / "이미지" / "2"
     for folder in (folder1, folder2):
