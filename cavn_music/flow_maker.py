@@ -61,10 +61,12 @@ def safe_filename(name):
 
 # 화면의 미디어 칸(이미지·영상·컬렉션)을 위에서 아래, 왼쪽에서 오른쪽 순서로 읽는다.
 # 왼쪽 메뉴(라이브러리)와 아래 프롬프트 칸은 빼고, 가운데 격자만 본다.
-TILES_JS = """(prompt) => {
-    // prompt = 아래쪽 입력창 영역. 그 안에 있는 것(입력창에 붙인 이미지)만 빼고, 격자는 입력창 아래로도 이어지므로 다 센다
-    const inPrompt = r => prompt && r.left + r.width / 2 > prompt.x - 20 && r.left + r.width / 2 < prompt.x + prompt.width + 20
-        && r.top + r.height / 2 > prompt.y - 60 && r.top + r.height / 2 < prompt.y + prompt.height + 20;
+TILES_JS = """(box) => {
+    // box.prompt = 입력창, box.panel = 오른쪽 에이전트 대화 창. 그 안의 것(붙인 이미지, 대화 속 미리보기)만 빼고
+    // 격자는 입력창 아래로도 이어지므로 다 센다
+    const inside = (r, a, pad, padTop) => a && r.left + r.width / 2 > a.x - pad && r.left + r.width / 2 < a.x + a.width + pad
+        && r.top + r.height / 2 > a.y - padTop && r.top + r.height / 2 < a.y + a.height + pad;
+    const inPrompt = r => box && (inside(r, box.prompt, 20, 60) || inside(r, box.panel, 0, 0));
     document.querySelectorAll('[data-cavn-tile]').forEach(e => e.removeAttribute('data-cavn-tile'));
     const side = [...document.querySelectorAll('*')].find(e =>
         (e.innerText || '').trim() === '전체 미디어' && e.getBoundingClientRect().width > 0);
@@ -120,6 +122,7 @@ TILES_JS = """(prompt) => {
 class Flow:
     def __init__(self, page):
         self.page = page
+        self.approved_seen = 0   # 지금까지 화면에 보인 [승인] 버튼 수 (새로 생긴 질문만 승인)
 
     # -- 프롬프트 칸
     def prompt_box(self, wait=30):
@@ -176,6 +179,8 @@ class Flow:
             time.sleep(1)
 
     def send_prompt(self, text):
+        # 보내기 직전의 [승인] 버튼 수를 기준으로, 이 요청에 새로 생기는 질문만 승인한다
+        self.approved_seen = len(self._approve_buttons())
         box = self.prompt_box()
         box.click()
         self.page.keyboard.insert_text(text)
@@ -198,7 +203,19 @@ class Flow:
     # -- 격자
     def tiles(self, kind=None):
         try:   # 입력칸을 못 찾아도 이미지 세기는 그대로 한다 (입력칸 안의 이미지만 못 뺄 뿐)
-            box = self.prompt_box(wait=3).bounding_box()
+            box = self.prompt_box(wait=3).evaluate("""e => {
+                const rect = x => { const r = x.getBoundingClientRect();
+                                    return {x: r.left, y: r.top, width: r.width, height: r.height}; };
+                // 입력칸이 오른쪽 에이전트 대화 창 안에 있으면 그 창 전체를 뺀다 (세로로 길고 좁은 상자)
+                let p = e, panel = null;
+                for (let i = 0; i < 12 && p.parentElement; i++) {
+                    p = p.parentElement;
+                    const r = p.getBoundingClientRect();
+                    if (r.height > innerHeight * 0.5 && r.width < innerWidth * 0.45) { panel = rect(p); break; }
+                    if (r.width >= innerWidth * 0.45) break;
+                }
+                return {prompt: rect(e), panel};
+            }""", timeout=3000)
         except (RuntimeError, PlaywrightError):
             box = None
         items = self.page.evaluate(TILES_JS, box)
@@ -209,36 +226,36 @@ class Flow:
             self.tiles()
         return self.page.locator(f"[data-cavn-tile={_css_str(key)}]").first
 
+    def _approve_buttons(self):
+        buttons = []
+        for b in self.page.get_by_role("button", name=re.compile(r"^\W*(check\s*)?승인\s*$")).all():
+            try:
+                if b.is_visible() and b.is_enabled():
+                    buttons.append(b)
+            except PlaywrightError:
+                pass
+        return buttons
+
     def approve(self):
-        """에이전트가 'N 크레딧을 사용하여 … 시작하시겠습니까?' 하고 물으면 [승인]을 누른다 ([항상 승인] 아님)."""
-        page = self.page
-        for loc in (page.get_by_role("button", name=re.compile(r"^\W*(check\s*)?승인\s*$")),
-                    page.get_by_text(re.compile(r"^\s*승인\s*$"))):
-            buttons = []
-            for b in loc.all():
-                try:
-                    if b.is_visible() and b.is_enabled():
-                        buttons.append(b)
-                except PlaywrightError:
-                    pass
-            if buttons:
-                try:
-                    buttons[-1].click(timeout=3000)   # 가장 최근 질문의 [승인]
-                    log("    에이전트 확인 질문에 [승인]을 눌렀습니다.")
-                    return True
-                except PlaywrightError:
-                    pass
-        return False
+        """에이전트가 'N 크레딧을 사용하여 … 시작하시겠습니까?' 하고 물으면 [승인]을 누른다 ([항상 승인] 아님).
+        대화 창에 예전 질문의 버튼과 '승인' 말풍선이 남아 있으므로, [승인] 버튼이 새로 늘었을 때만 한 번 누른다."""
+        buttons = self._approve_buttons()
+        if len(buttons) <= self.approved_seen:
+            return False
+        try:
+            buttons[-1].click(timeout=3000)   # 가장 최근 질문의 [승인]
+        except PlaywrightError:
+            return False
+        self.approved_seen = len(buttons)
+        log("    에이전트 확인 질문에 [승인]을 눌렀습니다.")
+        return True
 
     def wait_new(self, kind, before_keys, want, timeout, settle=10):
         """kind 칸이 want 개 이상 새로 생기고 settle 초 동안 늘지 않을 때까지 기다린다."""
         deadline = time.time() + timeout
         last_count, last_change, last_note = -1, time.time(), 0
-        last_approve = 0
         while time.time() < deadline:
-            if time.time() - last_approve > 10 and self.approve():
-                last_approve = time.time()
-                last_change = time.time()
+            self.approve()
             new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
             if len(new) != last_count:
                 last_count, last_change = len(new), time.time()

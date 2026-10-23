@@ -161,9 +161,25 @@ wrap.addEventListener("drop", e => {
   }
 });
 
+function panel() {
+  let p = document.getElementById("agentPanel");
+  if (!p) {
+    p = document.createElement("div");
+    p.id = "agentPanel";
+    p.style.cssText = "position:fixed;right:0;top:60px;bottom:0;width:320px;background:#111;z-index:8;overflow:auto";
+    p.innerHTML = `<div id="chat"></div>`;
+    document.body.appendChild(p);
+    wrap.style.cssText = "position:static;width:auto;margin:6px;background:#222;padding:10px";
+    p.appendChild(wrap);
+    document.getElementById("grid").style.right = "340px";
+  }
+  return document.getElementById("chat");
+}
+
 function submit() {
   const text = prompt.innerText.trim();
   if (!text) return;
+  const chat = panel();
   window.requests.push({text, attachment: attachment && attachment.id});
   const fresh = prompt.cloneNode(false);   // 실제 Flow 처럼 보낸 뒤 입력칸을 새로 그림
   fresh.addEventListener("keydown", onKey);
@@ -173,17 +189,24 @@ function submit() {
   attachment = null; document.getElementById("attach").innerHTML = "";
   const m = text.match(/(\d+)장/);
   if (att) {
+    // 질문과 버튼은 승인한 뒤에도 대화 창에 그대로 남고, '승인' 말풍선과 영상 미리보기가 붙는다
     const ask = document.createElement("div");
-    ask.id = "agentAsk";
-    ask.style.cssText = "position:fixed;right:10px;top:80px;width:300px;background:#111;padding:10px;z-index:8";
     ask.innerHTML = `<p>15 크레딧을 사용하여 1개 동영상 생성을 시작하시겠습니까?</p>
       <div role="button" class="ok">check 승인</div><div role="button" class="always">check 항상 승인</div>
       <div role="button" class="no">close 거부</div>`;
-    document.body.appendChild(ask);
+    chat.appendChild(ask);
     ask.querySelector(".always").onclick = () => { window.alwaysClicked = true; };
     ask.querySelector(".ok").onclick = () => {
-      ask.remove(); window.approved = (window.approved || 0) + 1;
-      setTimeout(() => { items.unshift({id: nextId++, kind: "video", label: "Drone video", from: att.id}); draw(); }, delay);
+      window.approved = (window.approved || 0) + 1;
+      if (window.approved > window.requests.filter(r => r.attachment).length) return;   // 같은 질문 또 누름
+      chat.insertAdjacentHTML("beforeend", "<div class='bubble'>승인</div>");
+      setTimeout(() => {
+        const id = nextId++;
+        items.unshift({id, kind: "video", label: "Drone video", from: att.id}); draw();
+        chat.insertAdjacentHTML("beforeend", `<div style="position:relative;width:240px;height:135px">
+          <video src="data:video/mp4;base64,AAAA" poster="${svg(8000 + id)}" style="width:240px;height:135px"></video>
+          <span>play_circle</span></div><p>영상 생성을 시작했습니다</p>`);
+      }, delay);
     };
   } else if (m) {
     const n = Number(m[1]);
