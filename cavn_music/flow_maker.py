@@ -141,10 +141,18 @@ class Flow:
                         box = b.bounding_box() if b.is_visible() else None
                     except PlaywrightError:
                         box = None
-                    if box and box["y"] > height * 0.5:
-                        low.append((box["y"], b))
+                    try:
+                        is_search = box and b.evaluate(
+                            "(e, ph) => /검색|search/i.test((e.placeholder || '') + (e.getAttribute('aria-label') || ''))"
+                            " || (e.tagName === 'INPUT' && !(e.placeholder || '').includes(ph))",
+                            PROMPT_PLACEHOLDER, timeout=2000)
+                    except PlaywrightError:
+                        is_search = True
+                    if box and box["width"] > 150 and not is_search:   # 위쪽 검색칸 등은 빼고
+                        # 보통은 화면 아래쪽 칸. 보낸 뒤 에이전트 창이 열려 위치가 바뀌어도 찾도록 위쪽도 허용
+                        low.append((box["y"] + (height if box["y"] > height * 0.5 else 0), b))
                 if low:
-                    target = max(low, key=lambda t: t[0])[1]   # 화면 맨 아래 칸
+                    target = max(low, key=lambda t: t[0])[1]   # 화면 맨 아래 칸 우선
                     try:
                         page.evaluate("() => document.querySelectorAll('[data-cavn-prompt]')"
                                       ".forEach(e => e.removeAttribute('data-cavn-prompt'))")
@@ -153,8 +161,18 @@ class Flow:
                     except PlaywrightError:
                         pass   # 그 사이 다시 그려짐 → 다시 찾기
             if time.time() > deadline:
+                # 원인을 알 수 있게 화면에 있는 글상자들을 적어 둔다
+                seen = []
+                for b in page.locator("textarea, input, [contenteditable], [role=textbox]").all()[:8]:
+                    try:
+                        seen.append(b.evaluate("""e => { const r = e.getBoundingClientRect();
+                            return `${e.tagName}${e.getAttribute('contenteditable') !== null ? '[ce]' : ''} `
+                                 + `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)} `
+                                 + `'${(e.placeholder || e.getAttribute('aria-label') || '').slice(0, 20)}'`; }""", timeout=2000))
+                    except PlaywrightError:
+                        pass
                 raise RuntimeError("Flow 프롬프트 칸('무엇을 만들고 싶으신가요?')을 찾지 못했습니다. "
-                                   "프로젝트 화면(전체 미디어)이 열려 있는지 확인해 주세요.")
+                                   f"(화면 크기 {page.evaluate('innerWidth')}x{height}, 글상자: {' | '.join(seen) or '없음'})")
             time.sleep(1)
 
     def send_prompt(self, text):
@@ -179,7 +197,10 @@ class Flow:
 
     # -- 격자
     def tiles(self, kind=None):
-        box = self.prompt_box().bounding_box()
+        try:   # 입력칸을 못 찾아도 이미지 세기는 그대로 한다 (입력칸 안의 이미지만 못 뺄 뿐)
+            box = self.prompt_box(wait=3).bounding_box()
+        except (RuntimeError, PlaywrightError):
+            box = None
         items = self.page.evaluate(TILES_JS, box)
         return [t for t in items if kind is None or t["kind"] == kind]
 
