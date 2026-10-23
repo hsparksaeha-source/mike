@@ -169,7 +169,9 @@ if (page === "albums") {
     songs.filter(s => s.album === current.right).forEach(s => {
       const row = document.createElement("div");
       row.className = "row";
-      row.innerHTML = `<img alt=""><span class="t">${s.title}</span> <span>CAVNV5.5</span>
+      // 실제 화면처럼 제목 옆에 안 보이는 '더 보기'가 하나 더 숨어 있음
+      row.innerHTML = `<img alt=""><span class="head"><span class="t">${s.title}</span>
+        <button style="display:none">더 보기</button></span> <span>CAVNV5.5</span>
         <div>${ready(s) ? "<button>MV 만들기</button><button class='master'>AI 마스터링</button>" : "생성 중 42%"}</div>
         <button class="more">더 보기</button>`;
       row.querySelector("img").onclick = () => {

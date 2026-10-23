@@ -83,13 +83,6 @@ def to_seconds(text):
     return secs
 
 
-def xpath_literal(s):
-    if "'" not in s:
-        return f"'{s}'"
-    if '"' not in s:
-        return f'"{s}"'
-    return "concat(" + ", \"'\", ".join(f"'{p}'" for p in s.split("'")) + ")"
-
 
 # ---------------------------------------------------------------- 화면 도우미
 
@@ -376,24 +369,36 @@ class Cavn:
 
     # -- 곡 목록
     def song_rows(self, title):
-        # [더 보기] 버튼에서 출발해 제목이 들어 있는 가장 가까운 상자 = 곡 한 줄.
-        # (제목 글씨에서 출발하면 아래 재생바의 제목까지 잡혀서, 재생할 때마다 순서가 바뀜)
-        xp = ("xpath=//*[normalize-space(text())='더 보기']"
-              f"/ancestor::*[.//*[normalize-space(text())={xpath_literal(title)}]][1]")
-        rows = []
-        for el in self._visible(self.page.locator(xp), "right"):
-            box = el.bounding_box()
-            if box and box["height"] < 400:
-                rows.append(el)
-        rows.sort(key=lambda e: e.bounding_box()["y"])
-        return rows
+        """오른쪽 목록에서 이 제목의 곡 줄들 (위에서부터).
+        화면에 보이는 [더 보기]에서 출발해 제목이 들어 있는 가장 가까운 상자 = 곡 한 줄.
+        (곡마다 안 보이는 '더 보기'가 하나 더 숨어 있고, 아래 재생바에도 제목이 있어서 둘 다 빼야 함)"""
+        count = self.page.evaluate("""([title, mid]) => {
+            const norm = t => (t || '').replace(/\\s+/g, ' ').trim();
+            const own = e => norm([...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(''));
+            const shown = e => { const r = e.getBoundingClientRect();
+                                 return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
+            document.querySelectorAll('[data-cavn-row]').forEach(e => e.removeAttribute('data-cavn-row'));
+            const rows = new Set();
+            for (const more of document.querySelectorAll('body *')) {
+                if (own(more) !== '더 보기' || !shown(more)) continue;
+                let p = more.parentElement;
+                while (p && ![...p.querySelectorAll('*')].some(e => own(e) === norm(title))) p = p.parentElement;
+                if (!p) continue;
+                const r = p.getBoundingClientRect();
+                if (r.height < 400 && r.left + r.width / 2 >= mid) rows.add(p);
+            }
+            const list = [...rows].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+            list.forEach((e, i) => e.setAttribute('data-cavn-row', String(i)));
+            return list.length;
+        }""", [title, self._mid_x()])
+        return [self.page.locator(f"[data-cavn-row='{i}']").first for i in range(count)]
 
     def row_ready(self, row):
         try:
             text = row.inner_text()
         except PlaywrightError:
             return False
-        return "더 보기" in text and not GENERATING_RE.search(text)
+        return not GENERATING_RE.search(text)
 
     def wait_new_rows(self, title, before):
         deadline = time.time() + GENERATE_TIMEOUT_SEC
@@ -461,7 +466,7 @@ class Cavn:
 
     # -- 다운로드
     def _open_menu(self, row):
-        more = row.get_by_text("더 보기").first
+        more = row.get_by_text("더 보기").filter(visible=True).first
         more.scroll_into_view_if_needed()
         more.click()
         time.sleep(0.8)
