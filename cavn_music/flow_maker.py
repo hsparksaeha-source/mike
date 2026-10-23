@@ -525,8 +525,12 @@ class Flow:
             deadline = time.time() + DOWNLOAD_TIMEOUT_MS / 1000
             last = (0, time.time())
             folder_files = []
+            fronted = False
             while time.time() < deadline:
                 time.sleep(1)
+                if not fronted and any(p not in pages_before for p in context.pages):
+                    page.bring_to_front()   # 다운로드 창이 열려도 작업 화면을 앞으로 (뒤로 가면 화면이 멈출 수 있음)
+                    fronted = True
                 folder_files = new_files_in(downloads_dir, start)
                 count = len(got) + len(folder_files)
                 if count != last[0]:
