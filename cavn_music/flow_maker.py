@@ -37,8 +37,8 @@ from thumb_agent.browser import start_real_chrome  # noqa: E402
 
 FLOW_URL = "https://flow.google.com/"
 DEFAULT_OUT = r"F:\음악생성"
-PROFILE_DIR = HERE / "flow_profile"
-DEBUG_PORT = 9225  # CAVN(9224)과 겹치지 않게
+PROFILE_DIR = Path.home() / "CavnFlowChromeProfile"  # 로그인 저장 (프로그램 폴더를 새로 받아도 유지)
+DEBUG_PORT = 9224  # CAVN·Flow 가 같은 전용 크롬을 함께 씀 (썸네일 9222, 유튜브 자동입력 9223)
 
 IMAGES_PER_TRACK = 15
 IMAGE_TIMEOUT_SEC = 20 * 60
@@ -416,7 +416,8 @@ def connect(pw):
         raise SystemExit("크롬을 찾지 못했습니다. 크롬을 설치해 주세요.")
     browser = pw.chromium.connect_over_cdp(cdp)
     context = browser.contexts[0] if browser.contexts else browser.new_context()
-    page = context.pages[0] if context.pages else context.new_page()
+    # CAVN·Flow 가 같은 크롬을 쓰므로 이 사이트 탭을 찾아 쓰고, 없으면 새 탭
+    page = next((p for p in context.pages if "flow.google" in p.url), None) or context.new_page()
     page.bring_to_front()
     if "/project/" not in page.url:
         page.goto(FLOW_URL, wait_until="domcontentloaded")

@@ -42,12 +42,18 @@
 <div id="createPage" hidden>
   <div id="left">
     <div><button>영감 모드</button><button id="customTab">커스텀 모드</button></div>
-    <label>제목 (필수)</label>
-    <input type="text" id="title">
-    <div>가사 (필수) <span><button role="switch" id="instr" aria-checked="false"></button><span>연주곡</span></span></div>
+    <button>오디오 업로드</button><button>음색 선택</button>
+    <div>제목 <span>(필수)</span></div>
+    <textarea id="title" rows="2"></textarea>
+    <div>가사 <span>(필수)</span> <button>+ 구조</button>
+      <span><button role="switch" id="instr" aria-checked="false"></button><span>연주곡</span></span></div>
     <textarea id="lyrics"></textarea>
-    <div>음악 스타일</div>
-    <textarea id="style" maxlength="1000"></textarea>
+    <button id="lyricsGen">가사 생성</button>
+    <div>음악 스타일 <span>?</span></div>
+    <textarea id="style" maxlength="1000" placeholder="예: 팝록, 따뜻한 보컬"></textarea>
+    <div>가수 성별 <span>?</span></div>
+    <div><button class="g">랜덤</button><button class="g">♂ 남성</button><button class="g">♀ 여성</button></div>
+    <div>모델 선택</div>
     <div id="advToggle">고급 설정</div>
     <div id="adv" hidden><label>제외할 스타일<input type="text" id="exclude"></label></div>
     <button id="leftAlbum" aria-haspopup="listbox"></button>
@@ -131,7 +137,10 @@ if (page === "albums") {
     const on = instr.getAttribute("aria-checked") !== "true";
     instr.setAttribute("aria-checked", on);
     document.getElementById("lyrics").style.display = on ? "none" : "block";
+    document.getElementById("lyricsGen").style.display = on ? "none" : "inline";
   };
+  let gender = "랜덤";
+  document.querySelectorAll(".g").forEach(b => b.onclick = () => gender = b.textContent.replace(/[♂♀]\s*/, ""));
   document.getElementById("advToggle").onclick = () => {
     const adv = document.getElementById("adv"); adv.hidden = !adv.hidden;
   };
@@ -214,6 +223,7 @@ if (page === "albums") {
       lyrics: instrumental ? "" : document.getElementById("lyrics").value,
       style: document.getElementById("style").value,
       exclude: document.getElementById("exclude").value,
+      gender,
     });
     let nextId = load("nextId", 1);
     const pair = lengths.map(len => ({title, album: current.left, length: len,

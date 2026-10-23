@@ -47,6 +47,18 @@ class Track:
         parts = [self.genre, self.style] if include_genre else [self.style]
         return ", ".join(p.strip().rstrip(",") for p in parts if p.strip())
 
+    def gender(self):
+        """CAVN '가수 성별' 버튼: 여성 / 남성 / 랜덤.
+        클래식·샤크리드·미사는 무조건 여성. 그 밖에는 스타일 글의 보컬 설명으로 정한다."""
+        text = f"{self.title} {self.genre} {self.style}".lower()
+        if self.classical or re.search(r"sacred|\bmass\b|미사|샤크리드|성가", text):
+            return "여성"
+        if re.search(r"female|woman|women|soprano|mezzo|여성", text):
+            return "여성"
+        if re.search(r"\bmale\b|\bman\b|baritone|tenor|crooner|남성", text):
+            return "남성"
+        return "랜덤"
+
     def lyrics_box(self):
         """CAVN '가사' 칸에 넣을 글 (클래식은 없음)."""
         return "" if self.classical else self.lyrics

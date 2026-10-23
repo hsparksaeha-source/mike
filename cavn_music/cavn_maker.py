@@ -42,8 +42,8 @@ from thumb_agent.browser import start_real_chrome  # noqa: E402
 CREATE_URL = "https://cavn.ai/create"
 ALBUMS_URL = "https://cavn.ai/albums"
 DEFAULT_OUT = r"F:\음악생성"
-PROFILE_DIR = HERE / "browser_profile"
-DEBUG_PORT = 9224  # 썸네일(9222)·유튜브 자동입력(9223)과 겹치지 않게
+PROFILE_DIR = Path.home() / "CavnFlowChromeProfile"  # 로그인 저장 (프로그램 폴더를 새로 받아도 유지)
+DEBUG_PORT = 9224  # CAVN·Flow 가 같은 전용 크롬을 함께 씀 (썸네일 9222, 유튜브 자동입력 9223)
 
 POP_STYLE_INCLUDES_GENRE = True  # 가요/팝: 음악 스타일 칸에 '장르'도 앞에 붙여 넣음
 GENERATE_TIMEOUT_SEC = 15 * 60   # 곡 생성 최대 대기
@@ -66,7 +66,6 @@ TEXT_LYRIC_ITEMS = [
     ("텍스트 가사 다운로드", "구간 라벨 유지", "_구간라벨", ".txt"),
     ("텍스트 가사 다운로드", "가사 본문만", "_가사본문", ".txt"),
 ]
-CONFIRM_BUTTONS = ["만들기", "생성", "확인", "저장", "완료", "Create", "OK", "Save"]
 
 
 def log(msg):
@@ -160,21 +159,26 @@ class Cavn:
         box = self._album_name_box()
         box.click()
         box.fill(name)
+        if box.input_value().strip() != name:   # 화면이 fill 을 못 알아들으면 한 글자씩 입력
+            box.fill("")
+            box.press_sequentially(name, delay=20)
         actual = box.input_value().strip() or name
         if actual != name:
             log(f"  (앨범 이름 글자 수 제한 때문에 '{actual}' 로 저장됩니다)")
-        dialog = page.locator("[role=dialog]:visible, [role=alertdialog]:visible")
-        scope = dialog.last if dialog.count() else page
-        for text in CONFIRM_BUTTONS:
-            btn = scope.get_by_role("button", name=text, exact=True)
-            btns = [b for b in btn.all() if b.is_visible() and b.is_enabled()]
-            if btns:
-                btns[-1].click()
-                break
+        time.sleep(0.5)
+        buttons = [b for b in page.get_by_role("button", name="만들기", exact=True).all()
+                   if b.is_visible() and b.is_enabled()]
+        if buttons:
+            buttons[-1].click()
         else:
             box.press("Enter")
-        page.get_by_text(actual, exact=True).first.wait_for(timeout=15_000)
-        return actual
+        # 창이 닫히면 만들어진 것
+        for _ in range(30):
+            time.sleep(0.5)
+            if not box.is_visible():
+                time.sleep(1)
+                return actual
+        raise RuntimeError("[만들기]를 눌렀지만 앨범 만들기 창이 닫히지 않았습니다.")
 
     def _album_name_box(self):
         """앨범 만들기 창의 '앨범 이름' 칸 (뒤쪽 화면의 검색칸 등이 잡히지 않게 이름표로 찾는다)."""
@@ -218,10 +222,49 @@ class Cavn:
         time.sleep(1.5)
 
     # -- 입력
+    # 왼쪽 입력칸은 순서가 아니라 바로 위 이름표로 찾는다 (제목 칸도 여러 줄 글상자라서 순서로 세면 밀림)
+    FIELD_LABELS = [("title", "^제목"), ("lyrics", "^가사"), ("style", "^음악 스타일"),
+                    ("gender", "^가수 성별"), ("model", "^모델 선택")]
+
+    def fields(self):
+        """{'title': 칸, 'lyrics': 칸, 'style': 칸} — 이름표와 다음 이름표 사이에 있는 칸. 없으면 빠짐."""
+        found = self.page.evaluate("""([labels, mid]) => {
+            const own = e => [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim();
+            const vis = e => { const r = e.getBoundingClientRect();
+                               return r.width > 0 && r.height > 0 && r.left + r.width / 2 < mid; };
+            const all = [...document.querySelectorAll('body *')];
+            const marks = [];
+            for (const [key, re] of labels) {
+                const rx = new RegExp(re);
+                const el = all.find(e => vis(e) && rx.test(own(e)));
+                if (el) marks.push([key, el]);
+            }
+            marks.sort((a, b) => (a[1].compareDocumentPosition(b[1]) & 4) ? -1 : 1);
+            document.querySelectorAll('[data-cavn-field]').forEach(e => e.removeAttribute('data-cavn-field'));
+            const boxes = [...document.querySelectorAll('textarea, input:not([type]), input[type=text]')].filter(vis);
+            const out = [];
+            marks.forEach(([key, el], i) => {
+                const next = marks[i + 1] && marks[i + 1][1];
+                const f = boxes.find(f => (el.compareDocumentPosition(f) & 4) &&
+                                          (!next || (next.compareDocumentPosition(f) & 2)));
+                if (f) { f.setAttribute('data-cavn-field', key); out.push(key); }
+            });
+            return out;
+        }""", [self.FIELD_LABELS, self._mid_x()])
+        return {key: self.page.locator(f"[data-cavn-field={key}]").first for key in found}
+
+    def set_mode_custom(self):
+        tabs = self._visible(self.page.get_by_text(re.compile(r"^\s*커스텀 모드\s*$")), "left")
+        if tabs:
+            tabs[0].click()
+            time.sleep(1)
+        if "title" not in self.fields():
+            raise RuntimeError("커스텀 모드 화면(제목 칸)을 찾지 못했습니다.")
+
     def set_instrumental(self, on):
-        """연주곡 스위치. 켜지면 가사 칸이 사라지므로 왼쪽 글상자 개수로 상태를 확인한다."""
+        """연주곡 스위치. 켜지면 가사 칸이 사라지므로 가사 칸이 있는지로 상태를 확인한다."""
         def is_on():
-            return len(self.left_textareas()) <= 1
+            return "lyrics" not in self.fields()
         if is_on() == on:
             return
         label = self._visible(self.page.get_by_text("연주곡", exact=True), "left")
@@ -246,32 +289,34 @@ class Cavn:
         if is_on() != on:
             raise RuntimeError("연주곡 스위치를 바꾸지 못했습니다.")
 
+    def set_gender(self, gender):
+        """가수 성별: 랜덤 / 남성 / 여성 (칸이 없으면 건너뜀)."""
+        buttons = self._visible(self.page.get_by_role("button", name=re.compile(rf"(^|\s){gender}\s*$")), "left")
+        if buttons:
+            buttons[0].click()
+            time.sleep(0.5)
+        else:
+            log(f"  (가수 성별 '{gender}' 버튼을 찾지 못해 건너뜁니다)")
+
     def fill_form(self, track, title, style_text, lyrics_text):
-        page = self.page
-        self.click_text("커스텀 모드")
-        time.sleep(1)
+        self.set_mode_custom()
         self.set_instrumental(track.classical)
 
-        inputs = self._visible(page.locator("input[type=text], input:not([type])"), "left")
-        if not inputs:
-            raise RuntimeError("제목 칸을 찾지 못했습니다.")
-        inputs[0].fill(title)
-        known = [inputs[0]]
+        f = self.fields()
+        for key, name in (("title", "제목"), ("style", "음악 스타일")) + ((("lyrics", "가사"),) if not track.classical else ()):
+            if key not in f:
+                raise RuntimeError(f"'{name}' 칸을 찾지 못했습니다.")
+        f["title"].fill(title)
+        if not track.classical:
+            f["lyrics"].fill(lyrics_text)
+        f["style"].fill(style_text)
+        for key, want in (("title", title), ("lyrics", lyrics_text), ("style", style_text)):
+            if key in f and (key != "lyrics" or not track.classical):
+                if f[key].input_value().strip() != want.strip():
+                    raise RuntimeError(f"'{key}' 칸에 글이 제대로 들어가지 않았습니다 (글자 수 제한?).")
+        known = [f[k] for k in ("title", "lyrics", "style") if k in f]
 
-        boxes = self.left_textareas()
-        if track.classical:
-            style_box = boxes[0]
-        else:
-            if len(boxes) < 2:
-                raise RuntimeError("가사 칸을 찾지 못했습니다.")
-            boxes[0].fill(lyrics_text)
-            known.append(boxes[0])
-            style_box = boxes[1]
-        style_box.fill(style_text)
-        known.append(style_box)
-        if style_box.input_value().strip() != style_text.strip():
-            raise RuntimeError("음악 스타일이 끝까지 들어가지 않았습니다 (글자 수 제한?).")
-
+        self.set_gender(track.gender())
         if track.exclude:
             self.fill_exclude(track.exclude, known)
 
@@ -624,7 +669,8 @@ def connect(pw):
         raise SystemExit("크롬을 찾지 못했습니다. 크롬을 설치해 주세요.")
     browser = pw.chromium.connect_over_cdp(cdp)
     context = browser.contexts[0] if browser.contexts else browser.new_context()
-    page = context.pages[0] if context.pages else context.new_page()
+    # CAVN·Flow 가 같은 크롬을 쓰므로 이 사이트 탭을 찾아 쓰고, 없으면 새 탭
+    page = next((p for p in context.pages if "cavn.ai" in p.url), None) or context.new_page()
     page.bring_to_front()
     return page
 

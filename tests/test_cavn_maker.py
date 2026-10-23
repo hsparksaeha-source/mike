@@ -196,6 +196,7 @@ def test_pop_flow_on_mock(tmp_path):
     assert first["lyrics"].startswith("[Verse 1 - male lead]")
     assert first["style"].startswith("Classic 1960s pop")
     assert first["exclude"] == "rap, edm, korean lyrics"
+    assert first["gender"] == "남성"   # 'male vocal'
 
     names = sorted(p.name for p in songs.iterdir())
     for title in ("You Were Already There", "Un'Estate Soltanto"):
@@ -220,6 +221,7 @@ def test_classical_flow_and_resume(tmp_path):
     songs, state = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
     [c] = state["created"]
     assert c["instrumental"] and c["lyrics"] == ""
+    assert c["title"] == "Warm Socks, Slow Morning" and c["gender"] == "여성"   # 클래식은 무조건 여성
     assert c["style"].endswith("[Outro] (gentle cadence, slowly fading)")
     assert len(list(songs.iterdir())) == 10
     # 다시 실행하면 이미 받은 곡은 건너뜀
