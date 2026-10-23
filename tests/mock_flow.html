@@ -147,7 +147,7 @@ function draw() {
   window.collections = items.filter(i => i.kind === "collection").map(i => [...i.members]);
 }
 
-const prompt = document.getElementById("prompt");
+let prompt = document.getElementById("prompt");
 const wrap = document.getElementById("promptWrap");
 wrap.addEventListener("dragover", e => e.preventDefault());
 wrap.addEventListener("drop", e => {
@@ -162,7 +162,10 @@ function submit() {
   const text = prompt.innerText.trim();
   if (!text) return;
   window.requests.push({text, attachment: attachment && attachment.id});
-  prompt.innerText = "";
+  const fresh = prompt.cloneNode(false);   // 실제 Flow 처럼 보낸 뒤 입력칸을 새로 그림
+  fresh.addEventListener("keydown", onKey);
+  prompt.replaceWith(fresh);
+  prompt = fresh;
   const att = attachment;
   attachment = null; document.getElementById("attach").innerHTML = "";
   const m = text.match(/(\d+)장/);
@@ -175,7 +178,8 @@ function submit() {
     }
   }
 }
-prompt.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
+function onKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }
+prompt.addEventListener("keydown", onKey);
 document.getElementById("send").onclick = submit;
 
 document.getElementById("plus").onclick = () => {

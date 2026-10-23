@@ -157,8 +157,14 @@ class Flow:
         time.sleep(0.5)
         self.page.keyboard.press("Enter")
         time.sleep(2)
-        # Enter 로 안 보내졌으면(글이 그대로 남아 있으면) 오른쪽 화살표 버튼
-        left = box.evaluate("e => 'value' in e ? e.value : e.innerText") or ""
+        # Enter 로 안 보내졌으면(글이 그대로 남아 있으면) 오른쪽 화살표 버튼.
+        # 보내면 Flow 가 입력칸을 새로 그리므로, 예전 칸을 기다리지 말고 다시 찾아서 확인한다.
+        try:
+            self.prompt_box(wait=5)
+            left = self.page.evaluate("""() => { const e = document.querySelector('[data-cavn-prompt]');
+                return e ? ('value' in e ? e.value : e.innerText) : ''; }""") or ""
+        except (RuntimeError, PlaywrightError):
+            left = ""
         if text[:20] in left:
             send = self.page.locator("button").filter(has_text=re.compile(r"arrow_forward|send|보내기"))
             send = [b for b in send.all() if b.is_visible()]
@@ -443,7 +449,7 @@ def connect(pw):
         projects = [p for p in context.pages if "flow.google" in p.url and "/project/" in p.url]
         if projects:
             page = projects[-1]
-        elif "/project/" not in page.url:
+        if "/project/" not in page.url:
             print("!! 프로젝트가 열린 탭을 찾지 못했습니다. 지금 탭에서 그대로 진행합니다.")
         page.bring_to_front()
     log(f"작업 탭: {page.url}")
