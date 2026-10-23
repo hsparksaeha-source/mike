@@ -9,7 +9,9 @@
   #right { position: fixed; right: 0; top: 0; width: 60%; bottom: 60px; overflow: auto; padding: 10px; box-sizing: border-box; }
   #player { position: fixed; left: 0; right: 0; bottom: 0; height: 60px; background: #000; }
   .row { border-bottom: 1px solid #333; padding: 8px; height: 110px; box-sizing: border-box; }
-  .row img { width: 50px; height: 50px; background: #555; }
+  .row img { width: 50px; height: 50px; background: #555; display: block; }
+  .row .jk { position: relative; display: inline-block; }
+  .row .play { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; }
   textarea { width: 90%; height: 80px; display: block; }
   #make { width: 90%; display: block; }
   #rightAlbum { width: 300px; }
@@ -170,11 +172,11 @@ if (page === "albums") {
       const row = document.createElement("div");
       row.className = "row";
       // 실제 화면처럼 제목 옆에 안 보이는 '더 보기'가 하나 더 숨어 있음
-      row.innerHTML = `<img alt=""><span class="head"><span class="t">${s.title}</span>
+      row.innerHTML = `<span class="jk"><img alt=""><span class="play">▶</span></span><span class="head"><span class="t">${s.title}</span>
         <button style="display:none">더 보기</button></span> <span>CAVNV5.5</span>
         <div>${ready(s) ? "<button>MV 만들기</button><button class='master'>AI 마스터링</button>" : "생성 중 42%"}</div>
         <button class="more">더 보기</button>`;
-      row.querySelector("img").onclick = () => {
+      row.querySelector(".play").onclick = () => {
         document.getElementById("ptitle").textContent = s.title;
         document.getElementById("ptime").textContent = "00:00 / " + fmt(s.length);
       };

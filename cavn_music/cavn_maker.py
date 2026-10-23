@@ -47,10 +47,10 @@ PROFILE_DIR = Path.home() / "CavnFlowChromeProfile"  # 로그인 저장 (프로�
 DEBUG_PORT = 9224  # CAVN·Flow 가 같은 전용 크롬을 함께 씀 (썸네일 9222, 유튜브 자동입력 9223)
 
 POP_STYLE_INCLUDES_GENRE = True  # 가요/팝: 음악 스타일 칸에 '장르'도 앞에 붙여 넣음
-GENERATE_TIMEOUT_SEC = 15 * 60   # 곡 생성 최대 대기
-DOWNLOAD_TIMEOUT_MS = 180_000
+GENERATE_TIMEOUT_SEC = 30 * 60   # 곡 생성 최대 대기 (주말엔 느릴 수 있어 넉넉히)
+DOWNLOAD_TIMEOUT_MS = 300_000
 MASTER_STYLE = "밝고 선명한"     # AI 마스터링 스타일
-MASTER_TIMEOUT_SEC = 10 * 60     # 마스터링 처리 최대 대기
+MASTER_TIMEOUT_SEC = 20 * 60     # 마스터링 처리 최대 대기
 CREDITS_PER_SONG = 5             # 곡 만들기 5크레딧/2곡, 마스터링 5크레딧/1곡
 MASTER_CHOICES = {0: "안 함", 1: "함 (앨범 전체, 긴 곡만)"}
 GENERATING_RE = re.compile(r"생성\s*중|대기\s*중|처리\s*중|\d+\s*%|Generating|Queued|Pending", re.I)
@@ -131,7 +131,7 @@ class Cavn:
     def open_create(self):
         self.page.goto(self.create_url, wait_until="domcontentloaded")
         try:
-            self.page.get_by_text("지금 만들기").first.wait_for(timeout=20_000)
+            self.page.get_by_text("지금 만들기").first.wait_for(timeout=60_000)
         except PlaywrightTimeout:
             log("CAVN 곡 만들기 화면이 보이지 않습니다. 열린 크롬에서 로그인해 주세요.")
             input("로그인을 마치고 곡 만들기 화면이 보이면 Enter 를 누르세요... ")
@@ -144,7 +144,7 @@ class Cavn:
         """앨범이 없으면 만든다. 실제로 만들어진 앨범 이름을 돌려준다."""
         page = self.page
         page.goto(self.albums_url, wait_until="domcontentloaded")
-        page.get_by_text("앨범 만들기").first.wait_for(timeout=20_000)
+        page.get_by_text("앨범 만들기").first.wait_for(timeout=60_000)
         time.sleep(2)
         if self._visible(page.get_by_text(name, exact=True)):
             log(f"앨범 '{name}' 이(가) 이미 있어서 그대로 씁니다.")
@@ -433,6 +433,15 @@ class Cavn:
             return a && isFinite(a.duration) && a.duration > 0 ? a.duration : null;
         }""")
 
+    def _click_jacket(self, jacket):
+        """앨범 자켓 누르기. 자켓 위에 재생 버튼(▶) 막이 덮여 있어서 그 자리를 그대로 누른다."""
+        jacket.scroll_into_view_if_needed()
+        box = jacket.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        self.page.mouse.move(x, y)   # 마우스를 올리면 ▶ 가 나타남 (hover() 는 막 때문에 기다리기만 해서 안 씀)
+        time.sleep(0.3)
+        self.page.mouse.click(x, y)
+
     def _pause(self, jacket):
         paused = self.page.evaluate("""() => {
             let n = 0;
@@ -441,16 +450,16 @@ class Cavn:
         }""")
         if not paused:
             try:
-                jacket.click()
+                self._click_jacket(jacket)
             except PlaywrightError:
                 pass
 
     def song_length(self, row):
         jacket = row.locator("img").first
         before = self._player_total()
-        jacket.click()
+        self._click_jacket(jacket)
         length = None
-        for _ in range(30):
+        for _ in range(60):   # 곡이 늦게 불러와져도 30초까지 기다림
             time.sleep(0.5)
             dur = self._audio_duration()
             total = self._player_total()
@@ -536,7 +545,7 @@ class Cavn:
         else:
             self._open_menu(row)
             page.get_by_text("AI 마스터링", exact=True).filter(visible=True).last.click()
-        page.get_by_text("AI 마스터링 스타일 선택").first.wait_for(timeout=30_000)
+        page.get_by_text("AI 마스터링 스타일 선택").first.wait_for(timeout=60_000)
         time.sleep(2)
         page.get_by_text(MASTER_STYLE, exact=True).filter(visible=True).first.click()
         time.sleep(0.5)
