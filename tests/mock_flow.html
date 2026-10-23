@@ -105,7 +105,12 @@ function openMenu(item, button) {
     if (d.textContent === "컬렉션 다운로드") {
       closeMenus();
       const files = item.members.map(id => ({name: `image_${id}.jpg`, text: `image ${id}`}));
-      if (zipMode) download("collection.zip", makeZip(files));
+      if (zipMode) {   // 실제 Flow 처럼 새 창이 열리고 그 창에서 내려받음
+        const w = window.open("about:blank");
+        const a = w.document.createElement("a");
+        a.href = URL.createObjectURL(makeZip(files)); a.download = "collection.zip";
+        w.document.body.appendChild(a); a.click();
+      }
       else {
         files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([f.text])), i * 400));
         window.open("about:blank");   // 다운로드 때문에 새 창이 열리는 경우

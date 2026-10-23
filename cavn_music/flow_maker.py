@@ -19,6 +19,7 @@ md 파일의 트랙마다 (트랙 번호 N):
 
 import argparse
 import re
+import shutil
 import sys
 import time
 import zipfile
@@ -496,45 +497,70 @@ class Flow:
 
     def download_collection(self, key, dest_dir, n_expected):
         """[⋮] → [컬렉션 다운로드]. 압축 파일 하나로 오든, 이미지가 낱개로 여러 개 오든 모두 받는다.
-        다운로드하면서 새 창(탭)이 열리면 다 받은 뒤 닫는다."""
+        - 다운로드는 새로 열리는 창(탭)에서 일어날 수 있어서, 모든 창의 다운로드를 지켜본다.
+        - 크롬이 프로그램을 거치지 않고 바로 '다운로드' 폴더에 저장하는 경우도 있어서,
+          그 폴더에 새로 생긴 이미지/zip 도 찾아 복사한다.
+        - 다운로드 때문에 열린 창은 다 받은 뒤 닫는다."""
         page = self.page
+        context = page.context
         got = []
 
         def on_download(dl):
             got.append(dl)
-        page.on("download", on_download)
-        pages_before = set(page.context.pages)
+
+        def on_page(p):
+            p.on("download", on_download)
+        watched = list(context.pages)
+        for p in watched:
+            p.on("download", on_download)
+        context.on("page", on_page)
+        pages_before = set(context.pages)
+        downloads_dir = DOWNLOADS_DIR
+        start = time.time()
         try:
+            page.evaluate("""() => { for (const o of [window, Window.prototype]) {
+                try { delete o.showSaveFilePicker; } catch (e) {} } }""")
             self.hover_menu(key)
             page.get_by_text(re.compile("컬렉션 다운로드|Download collection", re.I)).filter(visible=True).first.click()
             deadline = time.time() + DOWNLOAD_TIMEOUT_MS / 1000
             last = (0, time.time())
+            folder_files = []
             while time.time() < deadline:
                 time.sleep(1)
-                if len(got) != last[0]:
-                    last = (len(got), time.time())
-                one_zip = len(got) == 1 and got[0].suggested_filename.lower().endswith(".zip")
-                if any(p not in pages_before for p in page.context.pages):
-                    page.bring_to_front()   # 다운로드 창이 열려도 작업 화면을 앞으로
+                folder_files = new_files_in(downloads_dir, start)
+                count = len(got) + len(folder_files)
+                if count != last[0]:
+                    last = (count, time.time())
+                names = [d.suggested_filename.lower() for d in got] + [f.name.lower() for f in folder_files]
+                one_zip = any(n.endswith(".zip") for n in names)
                 idle = time.time() - last[1]
-                if got and (one_zip or len(got) >= n_expected or idle > 60):
+                if count and (one_zip and idle > 3 or count >= n_expected and idle > 3 or idle > 60):
                     break
-            if not got:
+            if not got and not folder_files:
                 raise RuntimeError("컬렉션 다운로드가 시작되지 않았습니다.")
             saved = []
             for i, dl in enumerate(got, 1):
-                name = Path(dl.suggested_filename).name or f"image_{i}.jpg"
-                dest = Path(dest_dir) / name
-                n = 1
-                while dest.exists():
-                    dest = Path(dest_dir) / f"{Path(name).stem}_{n}{Path(name).suffix}"
-                    n += 1
+                dest = unique_path(Path(dest_dir), Path(dl.suggested_filename).name or f"image_{i}.jpg")
                 dl.save_as(dest)
                 saved.append(dest)
+            if not got:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 복사
+                log(f"    ('{downloads_dir}' 에 저장된 {len(folder_files)}개를 복사합니다)")
+                for f in folder_files:
+                    dest = unique_path(Path(dest_dir), f.name)
+                    shutil.copy2(f, dest)
+                    saved.append(dest)
             return saved
         finally:
-            page.remove_listener("download", on_download)
-            for p in page.context.pages:   # 다운로드 때문에 열린 창은 닫기
+            for p in watched:
+                try:
+                    p.remove_listener("download", on_download)
+                except Exception:
+                    pass
+            try:
+                context.remove_listener("page", on_page)
+            except Exception:
+                pass
+            for p in context.pages:   # 다운로드 때문에 열린 창은 닫기
                 if p not in pages_before and p != page:
                     try:
                         p.close()
@@ -557,6 +583,33 @@ class Flow:
 
 def _css_str(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+DOWNLOADS_DIR = Path.home() / "Downloads"   # 크롬 기본 다운로드 폴더
+
+
+def new_files_in(folder, since):
+    """folder 에 since 이후 새로 생긴, 다 받아진 이미지/zip 파일들."""
+    if not folder.is_dir():
+        return []
+    out = []
+    for f in folder.iterdir():
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        if f.is_file() and st.st_mtime >= since - 2 and f.suffix.lower() in IMAGE_EXTS + (".zip",):
+            out.append(f)
+    return sorted(out, key=lambda f: f.stat().st_mtime)
+
+
+def unique_path(folder, name):
+    dest = folder / name
+    n = 1
+    while dest.exists():
+        dest = folder / f"{Path(name).stem}_{n}{Path(name).suffix}"
+        n += 1
+    return dest
 
 
 def extract_images(zip_path, dest_dir):

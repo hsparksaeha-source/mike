@@ -23,7 +23,8 @@ TWO_TRACKS = EASY_MD.replace("# PART B.", EASY_MD[EASY_MD.index("## Track 1."):E
 
 
 @pytest.mark.parametrize("zip_mode", ["1", "0"])
-def test_flow_two_tracks(tmp_path, zip_mode):
+def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")   # 실제 다운로드 폴더는 안 봄
     md = tmp_path / "낭만오케스트라3집.md"
     md.write_text(TWO_TRACKS, encoding="utf-8")
     out = tmp_path / "out"
@@ -65,7 +66,8 @@ def test_flow_two_tracks(tmp_path, zip_mode):
     flow_maker.run(md, out, page=None, confirm=False, dry_run=True)
 
 
-def test_reuse_existing_images(tmp_path):
+def test_reuse_existing_images(tmp_path, monkeypatch):
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
     """이미지 15장이 이미 Flow 맨 앞에 있으면, 새로 만들지 않고 그 이미지로 영상·컬렉션만 한다."""
     from md_parser import parse_md
     [track] = parse_md(EASY_MD)
@@ -87,3 +89,19 @@ def test_reuse_existing_images(tmp_path):
     assert sorted(collections[0]) == list(range(3, 18))
     assert len(list((tmp_path / "이미지" / "1").iterdir())) == 15
     assert [p.name for p in (tmp_path / "장면").iterdir()] == ["1.mp4"]
+
+
+def test_collection_files_from_downloads_folder(tmp_path):
+    """크롬이 '다운로드' 폴더에 직접 저장한 파일을 찾아 복사하는지."""
+    import time
+    dl = tmp_path / "Downloads"
+    dl.mkdir()
+    start = time.time()
+    (dl / "old.jpg").write_text("x")
+    import os as _os
+    _os.utime(dl / "old.jpg", (start - 100, start - 100))   # 예전 파일은 무시
+    (dl / "a.jpg").write_text("a")
+    (dl / "b.png").write_text("b")
+    (dl / "c.jpg.crdownload").write_text("c")              # 받는 중인 파일은 무시
+    assert [f.name for f in flow_maker.new_files_in(dl, start)] == ["a.jpg", "b.png"] or \
+        sorted(f.name for f in flow_maker.new_files_in(dl, start)) == ["a.jpg", "b.png"]
