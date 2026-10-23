@@ -24,6 +24,7 @@
 <body>
 <div id="albumsPage" hidden>
   <h2>내 앨범</h2>
+  <input type="text" placeholder="앨범 검색">
   <button id="newAlbum">+ 앨범 만들기</button>
   <div id="albumCards"></div>
 </div>
@@ -94,11 +95,16 @@ if (page === "albums") {
   draw();
   document.getElementById("newAlbum").onclick = () => {
     const d = document.createElement("div");
-    d.className = "dialog"; d.setAttribute("role", "dialog");
-    d.innerHTML = `<div>새 앨범</div><input type="text" maxlength="50"><button>취소</button><button>만들기</button>`;
+    d.className = "dialog";   // 실제 화면처럼 role 없음, 이름 칸 + 설명 칸
+    d.innerHTML = `<div>앨범 만들기</div><label>앨범 이름 *</label>
+      <input type="text" placeholder="앨범 이름을 입력해주세요">
+      <label>앨범 설명</label><textarea placeholder="앨범 설명을 입력해주세요 (선택사항)"></textarea>
+      <button>취소</button><button>만들기</button>`;
     document.body.appendChild(d);
     d.querySelectorAll("button")[1].onclick = () => {
-      albums[d.querySelector("input").value] = 0; store("albums", albums); closeAll(); draw();
+      const n = d.querySelector("input").value;
+      if (!n) return;   // 이름이 비면 안 만들어짐
+      albums[n] = 0; store("albums", albums); closeAll(); draw();
     };
   };
 } else if (page === "mastering") {

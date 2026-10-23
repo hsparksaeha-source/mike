@@ -157,8 +157,8 @@ class Cavn:
             return name
         log(f"앨범 '{name}' 만들기")
         page.get_by_text("앨범 만들기").filter(visible=True).first.click()
-        box = page.locator("input:visible, textarea:visible").first
-        box.wait_for(timeout=10_000)
+        box = self._album_name_box()
+        box.click()
         box.fill(name)
         actual = box.input_value().strip() or name
         if actual != name:
@@ -175,6 +175,23 @@ class Cavn:
             box.press("Enter")
         page.get_by_text(actual, exact=True).first.wait_for(timeout=15_000)
         return actual
+
+    def _album_name_box(self):
+        """앨범 만들기 창의 '앨범 이름' 칸 (뒤쪽 화면의 검색칸 등이 잡히지 않게 이름표로 찾는다)."""
+        page = self.page
+        candidates = [
+            page.get_by_placeholder(re.compile("앨범 이름")),
+            page.get_by_label(re.compile("앨범 이름")),
+            page.locator("xpath=//*[normalize-space(text())='앨범 이름']/following::input[1]"),
+        ]
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            for loc in candidates:
+                boxes = [b for b in loc.all() if b.is_visible()]
+                if boxes:
+                    return boxes[0]
+            time.sleep(0.5)
+        raise RuntimeError("앨범 만들기 창에서 '앨범 이름' 칸을 찾지 못했습니다.")
 
     def _album_triggers(self, side):
         loc = self.page.locator("button, [role=combobox], [aria-haspopup]").filter(
@@ -650,7 +667,13 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
 
     def work(page):
         cavn = Cavn(page, create_url, albums_url)
-        album_name = cavn.ensure_album(album)
+        try:
+            album_name = cavn.ensure_album(album)
+        except Exception as e:  # 자동으로 못 만들면 사람이 만들고 이어서 진행
+            log(f"!! 앨범을 자동으로 만들지 못했습니다: {str(e).splitlines()[0]}")
+            print(f"크롬에서 앨범 '{album}' 을(를) 직접 만들어 주세요.")
+            input("다 만들었으면 Enter 를 누르세요... ")
+            album_name = album
         cavn.open_create()
         cavn.select_album(album_name, "left")
         cavn.select_album(album_name, "right")
