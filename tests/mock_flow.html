@@ -32,7 +32,7 @@
 <div id="grid"></div>
 <div id="promptWrap">
   <div id="attach"></div>
-  <div id="prompt" contenteditable="true" data-placeholder="무엇을 만들고 싶으신가요?"></div>
+  <div id="promptHost"></div>
   <button>add</button> <button id="agent">에이전트</button> <button id="send">arrow_forward</button>
 </div>
 
@@ -147,7 +147,10 @@ function draw() {
   window.collections = items.filter(i => i.kind === "collection").map(i => [...i.members]);
 }
 
-let prompt = document.getElementById("prompt");
+const shadow = document.getElementById("promptHost").attachShadow({mode: "open"});
+shadow.innerHTML = `<div id="prompt" contenteditable="true" data-placeholder="무엇을 만들고 싶으신가요?"
+  style="min-height:40px;outline:none;color:#eee"></div>`;
+let prompt = shadow.getElementById("prompt");
 const wrap = document.getElementById("promptWrap");
 wrap.addEventListener("dragover", e => e.preventDefault());
 wrap.addEventListener("drop", e => {

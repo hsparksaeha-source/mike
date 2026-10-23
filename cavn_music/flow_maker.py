@@ -61,10 +61,8 @@ def safe_filename(name):
 
 # 화면의 미디어 칸(이미지·영상·컬렉션)을 위에서 아래, 왼쪽에서 오른쪽 순서로 읽는다.
 # 왼쪽 메뉴(라이브러리)와 아래 프롬프트 칸은 빼고, 가운데 격자만 본다.
-TILES_JS = """() => {
+TILES_JS = """(promptTop) => {
     document.querySelectorAll('[data-cavn-tile]').forEach(e => e.removeAttribute('data-cavn-tile'));
-    const box = document.querySelector('[data-cavn-prompt]');
-    const promptTop = box ? box.getBoundingClientRect().top : innerHeight;
     const side = [...document.querySelectorAll('*')].find(e =>
         (e.innerText || '').trim() === '전체 미디어' && e.getBoundingClientRect().width > 0);
     const sideRight = side ? side.getBoundingClientRect().right + 5 : 0;
@@ -122,29 +120,35 @@ class Flow:
 
     # -- 프롬프트 칸
     def prompt_box(self, wait=30):
-        """아래쪽 프롬프트 칸('무엇을 만들고 싶으신가요?'). 화면이 늦게 떠도 wait 초까지 기다린다."""
+        """아래쪽 프롬프트 칸('무엇을 만들고 싶으신가요?'). 화면이 늦게 떠도 wait 초까지 기다린다.
+        Flow 입력칸은 겉 화면 구조에서 바로 안 보이는 곳(shadow DOM)에 있을 수 있어서, 그 안까지 찾는
+        Playwright 찾기 기능을 쓴다. 보낸 뒤엔 칸이 새로 그려지므로 쓸 때마다 다시 찾는다."""
+        page = self.page
         deadline = time.time() + wait
         while True:
-            found = self.page.evaluate("""(ph) => {
-                document.querySelectorAll('[data-cavn-prompt]').forEach(e => e.removeAttribute('data-cavn-prompt'));
-                const shown = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-                const boxes = [...document.querySelectorAll('textarea, input, [contenteditable=true], [contenteditable=""], [role=textbox]')]
-                    .filter(shown);
-                const hint = e => [e.placeholder, e.getAttribute('aria-placeholder'), e.getAttribute('data-placeholder'),
-                                   e.getAttribute('aria-label'), e.innerText].filter(Boolean).join(' ');
-                // 1) 안내 문구가 붙은 칸  2) 화면 아래쪽에 있는 가장 아래 글상자
-                let box = boxes.find(e => hint(e).includes(ph));
-                if (!box) {
-                    const low = boxes.filter(e => e.tagName !== 'INPUT' && e.getBoundingClientRect().top > innerHeight * 0.6);
-                    low.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-                    box = low[0];
-                }
-                if (!box) return false;
-                box.setAttribute('data-cavn-prompt', '1');
-                return true;
-            }""", PROMPT_PLACEHOLDER)
-            if found:
-                return self.page.locator("[data-cavn-prompt]").first
+            height = page.evaluate("innerHeight")
+            for loc in (page.get_by_placeholder(PROMPT_PLACEHOLDER),
+                        page.locator(f"[aria-placeholder*='{PROMPT_PLACEHOLDER}'], [data-placeholder*='{PROMPT_PLACEHOLDER}']"),
+                        page.locator("[contenteditable=true], [contenteditable='']"),
+                        page.get_by_role("textbox"),
+                        page.locator("textarea")):
+                low = []
+                for b in loc.all():
+                    try:
+                        box = b.bounding_box() if b.is_visible() else None
+                    except PlaywrightError:
+                        box = None
+                    if box and box["y"] > height * 0.5:
+                        low.append((box["y"], b))
+                if low:
+                    target = max(low, key=lambda t: t[0])[1]   # 화면 맨 아래 칸
+                    try:
+                        page.evaluate("() => document.querySelectorAll('[data-cavn-prompt]')"
+                                      ".forEach(e => e.removeAttribute('data-cavn-prompt'))")
+                        target.evaluate("e => e.setAttribute('data-cavn-prompt', '1')", timeout=3000)
+                        return page.locator("[data-cavn-prompt]").first
+                    except PlaywrightError:
+                        pass   # 그 사이 다시 그려짐 → 다시 찾기
             if time.time() > deadline:
                 raise RuntimeError("Flow 프롬프트 칸('무엇을 만들고 싶으신가요?')을 찾지 못했습니다. "
                                    "프로젝트 화면(전체 미디어)이 열려 있는지 확인해 주세요.")
@@ -160,9 +164,8 @@ class Flow:
         # Enter 로 안 보내졌으면(글이 그대로 남아 있으면) 오른쪽 화살표 버튼.
         # 보내면 Flow 가 입력칸을 새로 그리므로, 예전 칸을 기다리지 말고 다시 찾아서 확인한다.
         try:
-            self.prompt_box(wait=5)
-            left = self.page.evaluate("""() => { const e = document.querySelector('[data-cavn-prompt]');
-                return e ? ('value' in e ? e.value : e.innerText) : ''; }""") or ""
+            left = self.prompt_box(wait=5).evaluate(
+                "e => 'value' in e ? e.value : e.innerText", timeout=3000) or ""
         except (RuntimeError, PlaywrightError):
             left = ""
         if text[:20] in left:
@@ -173,8 +176,8 @@ class Flow:
 
     # -- 격자
     def tiles(self, kind=None):
-        self.prompt_box()
-        items = self.page.evaluate(TILES_JS)
+        box = self.prompt_box().bounding_box()
+        items = self.page.evaluate(TILES_JS, box["y"] if box else 100000)
         return [t for t in items if kind is None or t["kind"] == kind]
 
     def tile(self, key, refresh=False):
