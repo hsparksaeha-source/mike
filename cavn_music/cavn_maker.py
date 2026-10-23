@@ -628,7 +628,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
         raise SystemExit("md 파일에서 곡을 찾지 못했습니다.")
 
     out_dir = Path(out_root) / safe_filename(album) / "노래"
-    kind = "클래식(연주곡)" if tracks[0].classical else "가요/팝"
+    kind = "연주곡(클래식·경음악)" if tracks[0].classical else "가요/팝"
     if master is None:
         master = 0 if dry_run else ask_master(album, len(tracks))
     print(f"\nmd 파일 : {md_path.name}\n앨범    : {album}\n종류    : {kind}\n저장 폴더: {out_dir}")

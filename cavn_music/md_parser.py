@@ -3,12 +3,14 @@
 두 가지 형식을 모두 읽는다.
   가요/팝:  "# Track 1. 제목"   아래에 "## 제목", "## 장르 → 텍스트 박스", "## 스타일 → ...", "## 가사 → ..."
   클래식:   "## 트랙 1: 제목"   아래에 "### 제목 → ...", "### 스타일 → ...", "### Exclude Styles → ...",
-            "### 가사(구조 태그) → ..."
+            "### 가사(구조 태그) → ...", "### 이미지 프롬프트 → ...", "### 영상 프롬프트 → ..."
+  경음악:   "## Track 1. 제목"  아래에 "### 구조 태그 (가사 칸 대신 → 텍스트 박스)",
+            "### 썸네일 이미지 생성 프롬프트", "### 뮤직 비디오 콘셉트 → ..."
 각 항목의 내용은 그 제목 바로 아래 ``` 코드 블록이다.
 
 CAVN 입력 규칙
   가요/팝:  연주곡 끔, 가사 칸 = 가사, 음악 스타일 칸 = (장르 + ) 스타일
-  클래식:   연주곡 켬, 음악 스타일 칸 = 스타일 + 줄바꿈 + 구조 태그 (가사 칸 없음)
+  클래식·경음악: 연주곡 켬, 음악 스타일 칸 = 스타일 + 줄바꿈 + 구조 태그 (가사 칸 없음)
 """
 
 import re
@@ -20,7 +22,8 @@ STYLE_MAX_LEN = 1000  # CAVN 음악 스타일 칸 글자 제한
 HEADING_RE = re.compile(r"^(#{1,6})\s*(.+?)\s*$", re.M)
 TRACK_RE = re.compile(r"^(?:Track|트랙)\s*(\d+)\s*[.:]\s*(.+)$", re.I)
 CODE_RE = re.compile(r"```[^\n]*\n(.*?)\n?```", re.S)
-COMMON_EXCLUDE_RE = re.compile(r"공통\s*Exclude\s*Styles?\s*:?\**\s*:?\s*`([^`]+)`", re.I)
+COMMON_EXCLUDE_RE = re.compile(
+    r"공통\s*Exclude\s*Styles?\s*:?\**\s*:?\s*(?:`([^`\n]+)`|\n\s*```[^\n]*\n(.*?)\n?```)", re.I | re.S)
 HANGUL_PAREN_RE = re.compile(r"\s*\([^()]*[가-힣][^()]*\)\s*$")
 
 
@@ -33,6 +36,8 @@ class Track:
     exclude: str = ""
     lyrics: str = ""
     classical: bool = False  # True면 연주곡 (가사 칸 = 구조 태그)
+    image_prompt: str = ""   # Flow 이미지 프롬프트
+    video_prompt: str = ""   # Flow 영상 프롬프트 (없으면 뮤직 비디오 콘셉트)
     warnings: list = field(default_factory=list)
 
     def style_box(self, include_genre=True):
@@ -59,6 +64,14 @@ def _section_key(heading):
         return "exclude"
     if name.startswith("가사"):
         return "structure" if "구조" in heading else "lyrics"
+    if name.startswith("구조"):
+        return "structure"
+    if "프롬프트" in name and "이미지" in name:
+        return "image"
+    if "프롬프트" in name and "영상" in name:
+        return "video"
+    if name.startswith("뮤직 비디오"):
+        return "video_concept"
     return None
 
 
@@ -77,7 +90,7 @@ def parse_md(text):
     common_exclude = ""
     m = COMMON_EXCLUDE_RE.search(text)
     if m:
-        common_exclude = m.group(1).strip()
+        common_exclude = (m.group(1) or m.group(2)).strip()
 
     tracks = []
     for i, (start, end, level, heading) in enumerate(headings):
@@ -110,6 +123,8 @@ def parse_md(text):
             exclude=_one_line(values.get("exclude", common_exclude)),
             lyrics=values.get("structure" if classical else "lyrics", ""),
             classical=classical,
+            image_prompt=_one_line(values.get("image", "")),
+            video_prompt=_one_line(values.get("video") or values.get("video_concept", "")),
         )
         if not track.style:
             track.warnings.append("스타일 칸이 비어 있음")
@@ -126,7 +141,7 @@ def parse_md_file(path):
 if __name__ == "__main__":
     import sys
     for t in parse_md_file(sys.argv[1]):
-        kind = "클래식" if t.classical else "가요/팝"
+        kind = "연주곡(클래식·경음악)" if t.classical else "가요/팝"
         print(f"[{t.number}] {t.title}  ({kind}, 스타일 {len(t.style_box())}자, 가사 {len(t.lyrics_box())}자)")
         for w in t.warnings:
             print("    !!", w)
