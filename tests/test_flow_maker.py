@@ -43,7 +43,7 @@ def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
     assert approved == [2, False]   # 영상마다 [승인]을 누름 ([항상 승인]은 안 누름)
     assert wrong is None            # '새 세션'·'캐릭터 만들기'는 누르지 않음
     album = out / "낭만오케스트라3집"
-    folder1, folder2 = album / "이미지" / "1", album / "이미지" / "2"
+    folder1, folder2 = album / "이미지" / "1번", album / "이미지" / "2번"
     for folder in (folder1, folder2):
         names = sorted(p.name for p in folder.iterdir())
         assert len(names) == 15 and all(n.endswith(".jpg") for n in names), names   # 이미지만
@@ -80,14 +80,14 @@ def test_reuse_existing_images(tmp_path, monkeypatch):
         flow = flow_maker.Flow(page)
         flow.send_prompt("photorealistic test 15장")
         flow.wait_new("image", set(), 16, 30, settle=2)
-        flow_maker.make_track(flow, track, tmp_path / "이미지" / "1", tmp_path / "장면", 15, reuse=True)
+        flow_maker.make_track(flow, track, tmp_path / "이미지" / "1번", tmp_path / "장면", 15, reuse=True)
         requests = page.evaluate("window.requests")
         collections = page.evaluate("window.collections")
         browser.close()
     assert [bool(r["attachment"]) for r in requests] == [False, True]   # 이미지 요청은 처음 1번뿐
     assert requests[1]["attachment"] == 3                              # 그 15장(3~17) 중 제일 처음 것
     assert sorted(collections[0]) == list(range(3, 18))
-    assert len(list((tmp_path / "이미지" / "1").iterdir())) == 15
+    assert len(list((tmp_path / "이미지" / "1번").iterdir())) == 15
     assert [p.name for p in (tmp_path / "장면").iterdir()] == ["1.mp4"]
 
 
@@ -113,3 +113,12 @@ def test_collection_files_from_downloads_folder(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     assert flow_maker.extract_images(dl / "32035c07-e744-4005-ae93-c0c389a45cd5", out) == 15
+
+
+def test_image_folder_names(tmp_path):
+    """이미지 폴더는 '1번', '2번' …. 예전 이름 '3' 폴더는 '3번'으로 바꿔서 이어 쓴다."""
+    (tmp_path / "3").mkdir()
+    (tmp_path / "3" / "a.jpg").write_text("a")
+    assert flow_maker.image_folder(tmp_path, 1) == tmp_path / "1번"
+    assert flow_maker.image_folder(tmp_path, 3) == tmp_path / "3번"
+    assert (tmp_path / "3번" / "a.jpg").exists() and not (tmp_path / "3").exists()

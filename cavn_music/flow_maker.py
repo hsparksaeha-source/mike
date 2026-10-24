@@ -5,11 +5,11 @@ md 파일의 트랙마다 (트랙 번호 N):
   2. 새로 생긴 이미지 중 화면 맨 끝(=제일 처음 만든) 것을 프롬프트 칸에 끌어다 놓고
      '영상 프롬프트'(없으면 뮤직 비디오 콘셉트) + "이 이미지로 영상 만들어 줘" → 영상 완성 기다림
   3. 오른쪽 위 [+] → [새 컬렉션] → 새 컬렉션에 이미지 15장을 끌어다 넣음 (영상은 그대로 둠)
-  4. 컬렉션에 마우스 올림 → [⋮] → [컬렉션 다운로드] → 받은 이미지 15장을 이미지\\N\\ 에 저장
+  4. 컬렉션에 마우스 올림 → [⋮] → [컬렉션 다운로드] → 받은 이미지 15장을 이미지\\N번\\ 에 저장
      (다운로드하면서 뜬 창은 닫음)
   5. 영상은 따로 장면\\N.mp4 로 저장 (이미지 폴더에 섞이지 않게)
 
-저장 위치: <저장 폴더>\\<md 파일 이름>\\이미지\\1 ~ N   이미지만 (캡컷 클래식 조립 프로그램이 읽는 번호 폴더)
+저장 위치: <저장 폴더>\\<md 파일 이름>\\이미지\\1번 ~ N번   이미지만 (캡컷 클래식 조립 프로그램이 읽는 번호 폴더)
            <저장 폴더>\\<md 파일 이름>\\장면\\1.mp4 ~ N.mp4   영상
 이미지 15장과 영상이 이미 있는 트랙은 건너뛴다 (다시 실행하면 남은 트랙만 함).
 
@@ -684,6 +684,19 @@ def video_path(scene_dir, number):
     return None
 
 
+def image_folder(out_dir, number):
+    """트랙 이미지 폴더 '1번', '2번' … (다른 자동화 프로그램과 맞춘 이름).
+    예전 이름('1')으로 만든 폴더가 있으면 '1번'으로 바꿔서 이어 쓴다."""
+    folder = out_dir / f"{number}번"
+    old = out_dir / str(number)
+    if not folder.exists() and old.is_dir():
+        try:
+            old.rename(folder)
+        except OSError:
+            return old
+    return folder
+
+
 def track_done(image_folder, scene_dir, number, n_images):
     """이미지 n_images장 이상과 영상이 다 있으면 끝난 트랙."""
     if not image_folder.is_dir() or not video_path(scene_dir, number):
@@ -792,10 +805,10 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
     album_dir = Path(out_root) / safe_filename(md_path.stem)
     out_dir, scene_dir = album_dir / "이미지", album_dir / "장면"
     last = max((t.number for t in tracks), default=0)
-    print(f"\nmd 파일 : {md_path.name}\n이미지  : {out_dir}\\1 ~ {last}\n영상    : {scene_dir}\\1.mp4 ~ {last}.mp4\n")
+    print(f"\nmd 파일 : {md_path.name}\n이미지  : {out_dir}\\1번 ~ {last}번\n영상    : {scene_dir}\\1.mp4 ~ {last}.mp4\n")
     todo = []
     for t in tracks:
-        folder = out_dir / str(t.number)
+        folder = image_folder(out_dir, t.number)
         if not t.image_prompt:
             mark = "!! 이미지 프롬프트 없음(건너뜀)"
         elif track_done(folder, scene_dir, t.number, n_images):
@@ -827,7 +840,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         for i, t in enumerate(todo, 1):
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
-                make_track(flow, t, out_dir / str(t.number), scene_dir, n_images,
+                make_track(flow, t, image_folder(out_dir, t.number), scene_dir, n_images,
                            reuse=reuse_first and i == 1, reuse_video=reuse_video_first and i == 1)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
