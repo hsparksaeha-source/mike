@@ -112,13 +112,13 @@ function openMenu(item, button) {
         w.document.body.appendChild(a); a.click();
       }
       else {
-        files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([f.text])), i * 400));
+        files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([new Uint8Array([0xff, 0xd8, 0xff]), f.text])), i * 400));
         window.open("about:blank");   // 다운로드 때문에 새 창이 열리는 경우
       }
     }
     if (d.textContent === "다운로드" && item.kind === "video") {
       m.innerHTML = "<div role='menuitem'>원본 크기(720p)</div><div role='menuitem'>1080p로 업스케일</div>";
-      m.querySelector("div").onclick = () => { closeMenus(); download(`video_${item.id}.mp4`, new Blob([`video ${item.id}`])); };
+      m.querySelector("div").onclick = () => { closeMenus(); download(`video_${item.id}.mp4`, new Blob(["\x00\x00\x00\x18ftypmp42" + `video ${item.id}`])); };
     }
   });
   document.body.appendChild(m);

@@ -495,7 +495,7 @@ class Flow:
             raise RuntimeError("컬렉션을 찾지 못했습니다.")
         return cols[0]["key"]   # 새로 만든 컬렉션은 격자 맨 앞
 
-    def download_collection(self, key, dest_dir, n_expected):
+    def download_collection(self, key, dest_dir, n_expected, menu_re=None, sub_re=None, kinds=None):
         """[⋮] → [컬렉션 다운로드]. 압축 파일 하나로 오든, 이미지가 낱개로 여러 개 오든 모두 받는다.
         - 다운로드는 새로 열리는 창(탭)에서 일어날 수 있어서, 모든 창의 다운로드를 지켜본다.
         - 크롬이 프로그램을 거치지 않고 바로 '다운로드' 폴더에 저장하는 경우도 있어서,
@@ -534,7 +534,14 @@ class Flow:
             page.evaluate("""() => { for (const o of [window, Window.prototype]) {
                 try { delete o.showSaveFilePicker; } catch (e) {} } }""")
             self.hover_menu(key)
-            page.get_by_text(re.compile("컬렉션 다운로드|Download collection", re.I)).filter(visible=True).first.click()
+            menu_re = menu_re or re.compile("컬렉션 다운로드|Download collection", re.I)
+            kinds = kinds or (".zip",) + IMAGE_EXTS
+            page.get_by_text(menu_re).filter(visible=True).first.click()
+            if sub_re:   # 화질 등을 고르는 작은 메뉴가 더 뜨면 첫 번째 항목 (안 뜨면 그냥 넘어감)
+                try:
+                    page.get_by_text(sub_re).filter(visible=True).first.click(timeout=3000)
+                except PlaywrightError:
+                    pass
             deadline = time.time() + DOWNLOAD_TIMEOUT_MS / 1000
             last = (0, time.time())
             folder_files = []
@@ -544,7 +551,7 @@ class Flow:
                 if not fronted and any(p not in pages_before for p in context.pages):
                     page.bring_to_front()   # 다운로드 창이 열려도 작업 화면을 앞으로 (뒤로 가면 화면이 멈출 수 있음)
                     fronted = True
-                folder_files = [f for d in watch_dirs for f in new_files_in(d, start)]
+                folder_files = [f for d in watch_dirs for f in new_files_in(d, start) if sniff_ext(f) in kinds]
                 count = len(got) + len(folder_files)
                 if count != last[0]:
                     last = (count, time.time())
@@ -560,12 +567,15 @@ class Flow:
                 dest = unique_path(Path(dest_dir), Path(dl.suggested_filename).name or f"image_{i}")
                 dl.save_as(dest)
                 kind = sniff_ext(dest)
-                if kind and dest.suffix.lower() != kind:
+                if kind not in kinds:   # 덜 받아졌거나 다른 파일 → 버림
+                    dest.unlink(missing_ok=True)
+                    continue
+                if dest.suffix.lower() != kind:
                     fixed = unique_path(Path(dest_dir), dest.stem + kind)
                     dest.rename(fixed)
                     dest = fixed
                 saved.append(dest)
-            if not got:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 복사
+            if not saved and folder_files:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 복사
                 log(f"    ('{folder_files[0].parent}' 에 저장된 {len(folder_files)}개를 복사합니다)")
                 for f in folder_files:
                     kind = sniff_ext(f)
@@ -573,6 +583,8 @@ class Flow:
                     dest = unique_path(Path(dest_dir), name)
                     shutil.copy2(f, dest)
                     saved.append(dest)
+            if not saved:
+                raise RuntimeError("받은 파일이 이미지·영상이 아니거나 덜 받아졌습니다.")
             return saved
         finally:
             for p in watched:
@@ -634,7 +646,7 @@ def new_files_in(folder, since):
 
 
 def sniff_ext(path):
-    """파일 앞부분을 보고 .zip / .jpg / .png / .webp 중 무엇인지 (모르면 '')."""
+    """파일 앞부분을 보고 .zip / .jpg / .png / .webp / .mp4 / .webm 중 무엇인지 (모르면 '')."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(12)
@@ -648,6 +660,10 @@ def sniff_ext(path):
         return ".png"
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return ".webp"
+    if head[4:8] == b"ftyp":
+        return ".mp4"
+    if head.startswith(b"\x1a\x45\xdf\xa3"):
+        return ".webm"
     return ""
 
 
@@ -763,14 +779,30 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
 
     log("  영상 다운로드")
     video_name = str(track.number)
+    path = None
     try:
-        path = flow.download_via_menu(video["key"], re.compile("^\\s*(다운로드|Download)\\s*$", re.I), scene_dir,
-                                      video_name, sub_re=re.compile(r"원본|720p|Original", re.I))
+        # 컬렉션처럼 다운로드 폴더에 완성된 영상 파일이 생길 때까지 기다렸다가, 진짜 영상인지 확인하고 옮긴다
+        # (덜 받아진 파일을 저장해서 영상이 깨지던 문제)
+        files = flow.download_collection(video["key"], scene_dir, 1,
+                                         menu_re=re.compile(r"^\s*(file_download|download)?\s*(다운로드|Download)\s*$", re.I),
+                                         sub_re=re.compile(r"원본|720p|Original", re.I), kinds=(".mp4", ".webm"))
+        if files:
+            path = files[0]
+            target = scene_dir / f"{video_name}{path.suffix}"
+            if target.exists():
+                target.unlink()
+            path = path.rename(target)
+            for extra in files[1:]:
+                extra.unlink(missing_ok=True)
     except (PlaywrightTimeout, PlaywrightError, RuntimeError) as e:
         log(f"    (메뉴로 못 받아서 직접 받습니다: {str(e).splitlines()[0]})")
         flow.page.keyboard.press("Escape")
+    if path is None or sniff_ext(path) not in (".mp4", ".webm"):
         path = flow.save_video_src(video["key"], scene_dir / f"{video_name}.mp4")
-    log(f"    받음: 장면\\{path.name}")
+        if sniff_ext(path) not in (".mp4", ".webm"):
+            path.unlink(missing_ok=True)
+            raise RuntimeError("영상 파일이 제대로 받아지지 않았습니다. Flow 에서 직접 받아 주세요.")
+    log(f"    받음: 장면\\{path.name} ({path.stat().st_size // 1024:,}KB)")
 
 
 # ---------------------------------------------------------------- 실행

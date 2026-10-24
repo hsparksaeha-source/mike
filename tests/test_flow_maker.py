@@ -60,7 +60,8 @@ def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
     # 새 컬렉션 2개 (새 것이 앞), 각각 그 트랙의 이미지 15장, 처음 있던 컬렉션은 그대로
     assert sorted(collections[1]) == list(range(3, 18))
     assert len(collections[0]) == 15 and collections[2] == [1]
-    assert (folder1 / "image_3.jpg").read_text() == "image 3"
+    assert (folder1 / "image_3.jpg").read_bytes().endswith(b"image 3")
+    assert (album / "장면" / "1.mp4").read_bytes()[4:8] == b"ftyp"   # 진짜 영상 파일
 
     # 다시 실행하면 이미 끝난 트랙은 건너뜀
     flow_maker.run(md, out, page=None, confirm=False, dry_run=True)
