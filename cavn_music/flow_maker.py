@@ -515,8 +515,21 @@ class Flow:
             p.on("download", on_download)
         context.on("page", on_page)
         pages_before = set(context.pages)
-        downloads_dir = DOWNLOADS_DIR
         start = time.time()
+        # 프로그램이 크롬을 조종하는 동안에는 받은 파일이 임시 폴더에 이상한 이름으로 저장되므로,
+        # 크롬에게 '다운로드\Flow_컬렉션' 폴더에 원래 이름(제목 없는 컬렉션.zip …)으로 저장하라고 지정한다
+        watch_dirs = [DOWNLOADS_DIR]
+        collect_dir = DOWNLOADS_DIR / "Flow_컬렉션"
+        try:
+            collect_dir.mkdir(parents=True, exist_ok=True)
+            browser = context.browser
+            if browser is not None:
+                cdp = browser.new_browser_cdp_session()
+                cdp.send("Browser.setDownloadBehavior",
+                         {"behavior": "allow", "downloadPath": str(collect_dir.resolve()), "eventsEnabled": True})
+                watch_dirs.insert(0, collect_dir)
+        except Exception as e:  # 안 되면 보통 다운로드 폴더만 지켜본다
+            log(f"    (다운로드 폴더 지정 실패, 기본 다운로드 폴더를 봅니다: {str(e).splitlines()[0]})")
         try:
             page.evaluate("""() => { for (const o of [window, Window.prototype]) {
                 try { delete o.showSaveFilePicker; } catch (e) {} } }""")
@@ -531,7 +544,7 @@ class Flow:
                 if not fronted and any(p not in pages_before for p in context.pages):
                     page.bring_to_front()   # 다운로드 창이 열려도 작업 화면을 앞으로 (뒤로 가면 화면이 멈출 수 있음)
                     fronted = True
-                folder_files = new_files_in(downloads_dir, start)
+                folder_files = [f for d in watch_dirs for f in new_files_in(d, start)]
                 count = len(got) + len(folder_files)
                 if count != last[0]:
                     last = (count, time.time())
@@ -553,7 +566,7 @@ class Flow:
                     dest = fixed
                 saved.append(dest)
             if not got:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 복사
-                log(f"    ('{downloads_dir}' 에 저장된 {len(folder_files)}개를 복사합니다)")
+                log(f"    ('{folder_files[0].parent}' 에 저장된 {len(folder_files)}개를 복사합니다)")
                 for f in folder_files:
                     kind = sniff_ext(f)
                     name = f.name if f.suffix.lower() == kind else f.stem + kind
