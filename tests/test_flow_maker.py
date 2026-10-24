@@ -92,16 +92,24 @@ def test_reuse_existing_images(tmp_path, monkeypatch):
 
 
 def test_collection_files_from_downloads_folder(tmp_path):
-    """크롬이 '다운로드' 폴더에 직접 저장한 파일을 찾아 복사하는지."""
+    """크롬이 '다운로드' 폴더에 직접 저장한 파일을 찾는지 (확장자 없는 zip 포함)."""
+    import os as _os
     import time
+    import zipfile
     dl = tmp_path / "Downloads"
     dl.mkdir()
     start = time.time()
-    (dl / "old.jpg").write_text("x")
-    import os as _os
-    _os.utime(dl / "old.jpg", (start - 100, start - 100))   # 예전 파일은 무시
-    (dl / "a.jpg").write_text("a")
-    (dl / "b.png").write_text("b")
-    (dl / "c.jpg.crdownload").write_text("c")              # 받는 중인 파일은 무시
-    assert [f.name for f in flow_maker.new_files_in(dl, start)] == ["a.jpg", "b.png"] or \
-        sorted(f.name for f in flow_maker.new_files_in(dl, start)) == ["a.jpg", "b.png"]
+    (dl / "old.jpg").write_bytes(b"\xff\xd8\xff old")
+    _os.utime(dl / "old.jpg", (start - 100, start - 100))        # 예전 파일은 무시
+    with zipfile.ZipFile(dl / "32035c07-e744-4005-ae93-c0c389a45cd5", "w") as z:   # 확장자 없는 zip
+        for i in range(15):
+            z.writestr(f"img_{i}.jpg", b"\xff\xd8\xff" + bytes([i]))
+    (dl / "b.png").write_bytes(b"\x89PNG data")
+    (dl / "c.jpg.crdownload").write_bytes(b"\xff\xd8\xff")       # 받는 중인 파일은 무시
+    (dl / "memo.txt").write_text("hello")                        # 이미지·zip 이 아니면 무시
+    found = sorted(f.name for f in flow_maker.new_files_in(dl, start))
+    assert found == ["32035c07-e744-4005-ae93-c0c389a45cd5", "b.png"]
+    assert flow_maker.sniff_ext(dl / "32035c07-e744-4005-ae93-c0c389a45cd5") == ".zip"
+    out = tmp_path / "out"
+    out.mkdir()
+    assert flow_maker.extract_images(dl / "32035c07-e744-4005-ae93-c0c389a45cd5", out) == 15

@@ -544,13 +544,20 @@ class Flow:
                 raise RuntimeError("컬렉션 다운로드가 시작되지 않았습니다.")
             saved = []
             for i, dl in enumerate(got, 1):
-                dest = unique_path(Path(dest_dir), Path(dl.suggested_filename).name or f"image_{i}.jpg")
+                dest = unique_path(Path(dest_dir), Path(dl.suggested_filename).name or f"image_{i}")
                 dl.save_as(dest)
+                kind = sniff_ext(dest)
+                if kind and dest.suffix.lower() != kind:
+                    fixed = unique_path(Path(dest_dir), dest.stem + kind)
+                    dest.rename(fixed)
+                    dest = fixed
                 saved.append(dest)
             if not got:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 복사
                 log(f"    ('{downloads_dir}' 에 저장된 {len(folder_files)}개를 복사합니다)")
                 for f in folder_files:
-                    dest = unique_path(Path(dest_dir), f.name)
+                    kind = sniff_ext(f)
+                    name = f.name if f.suffix.lower() == kind else f.stem + kind
+                    dest = unique_path(Path(dest_dir), name)
                     shutil.copy2(f, dest)
                     saved.append(dest)
             return saved
@@ -592,8 +599,12 @@ def _css_str(s):
 DOWNLOADS_DIR = Path.home() / "Downloads"   # 크롬 기본 다운로드 폴더
 
 
+PARTIAL_EXTS = (".crdownload", ".tmp", ".part", ".partial", ".download")
+
+
 def new_files_in(folder, since):
-    """folder 에 since 이후 새로 생긴, 다 받아진 이미지/zip 파일들."""
+    """folder 에 since 이후 새로 생긴, 다 받아진 이미지/zip 파일들.
+    Flow 는 확장자 없는 이름(예: 32035c07-e744-…)으로 내려줄 때가 있어서 속 내용으로 판단한다."""
     if not folder.is_dir():
         return []
     out = []
@@ -602,9 +613,29 @@ def new_files_in(folder, since):
             st = f.stat()
         except OSError:
             continue
-        if f.is_file() and st.st_mtime >= since - 2 and f.suffix.lower() in IMAGE_EXTS + (".zip",):
+        if not f.is_file() or st.st_mtime < since - 2 or f.suffix.lower() in PARTIAL_EXTS:
+            continue
+        if sniff_ext(f):
             out.append(f)
     return sorted(out, key=lambda f: f.stat().st_mtime)
+
+
+def sniff_ext(path):
+    """파일 앞부분을 보고 .zip / .jpg / .png / .webp 중 무엇인지 (모르면 '')."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return ""
+    if head.startswith(b"PK\x03\x04"):
+        return ".zip"
+    if head.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if head.startswith(b"\x89PNG"):
+        return ".png"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    return ""
 
 
 def unique_path(folder, name):
