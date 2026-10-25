@@ -353,3 +353,84 @@ def test_parse_classical_prompts():
     [t] = parse_md(CLASSICAL_MD)
     assert t.image_prompt == "Aerial drone photograph"
     assert t.video_prompt == ""
+
+
+SACRED_MD = """# 사크리드 뉴에이지 — 5집
+
+**반주·보이스**: 메조소프라노 여성 솔로 고정.
+
+## 트랙 1: 사랑이 머무는 저녁 식탁
+
+**제목**
+```
+사랑이 머무는 저녁 식탁
+```
+
+**장르**
+```
+Sacred, Ambient, Vocal, Mezzo-Soprano with Piano and Cello
+```
+
+**스타일** (474자 / 1000자 제한)
+```
+sacred ambient, warm and gathering, 54 BPM
+```
+
+**Exclude Styles** (259자)
+```
+drum kit, harp
+```
+
+**가사** (551자, 글자수 제한 없음)
+```
+[Intro] (soft piano and cello)
+[Verse] Mensa simplex, sub lumine tepido.
+```
+
+**가사 번역 (이중 자막용 대응표)**
+```
+LA  Mensa simplex
+ KR  소박한 식탁이
+```
+
+**썸네일 이미지 프롬프트**
+```
+A long rustic wooden table beside a stone chapel at dusk
+```
+
+**썸네일 이미지 프롬프트 (대안 구도)**
+```
+Close-up of a rustic wooden table
+```
+
+**배경 영상 프롬프트** (선택: 꼭 필요한 곡에만 사용)
+```
+Slow gentle camera drift over the table
+```
+
+## 트랙 2: 이 거룩한 자리, 오래된 돌벽
+
+**스타일**
+```
+sacred ambient, 50 BPM
+```
+
+**가사**
+```
+[Verse] Locus iste
+```
+"""
+
+
+def test_parse_sacred_bold_labels():
+    """사크리드 미사곡 md: 항목 이름이 '###' 대신 굵은 글씨(**스타일**)이고, 가사가 있는 보컬곡."""
+    t1, t2 = parse_md(SACRED_MD)
+    assert (t1.number, t1.title, t2.number, t2.title) == (1, "사랑이 머무는 저녁 식탁", 2, "이 거룩한 자리, 오래된 돌벽")
+    assert not t1.classical and not t1.warnings          # 연주곡 스위치 끔, 가사 칸에 가사
+    assert t1.style_box() == ("Sacred, Ambient, Vocal, Mezzo-Soprano with Piano and Cello, "
+                              "sacred ambient, warm and gathering, 54 BPM")
+    assert t1.lyrics_box().startswith("[Intro]") and "소박한" not in t1.lyrics_box()   # 번역은 안 넣음
+    assert t1.exclude == "drum kit, harp"
+    assert t1.image_prompt.startswith("A long rustic") and t1.video_prompt.startswith("Slow gentle")
+    assert t1.gender() == "여성"
+    assert t2.lyrics == "[Verse] Locus iste" and not t2.warnings

@@ -4,6 +4,8 @@
   가요/팝:  "# Track 1. 제목"   아래에 "## 제목", "## 장르 → 텍스트 박스", "## 스타일 → ...", "## 가사 → ..."
   클래식:   "## 트랙 1: 제목"   아래에 "### 제목 → ...", "### 스타일 → ...", "### Exclude Styles → ...",
             "### 가사(구조 태그) → ...", "### 이미지 프롬프트 → ...", "### 영상 프롬프트 → ..."
+  사크리드: "## 트랙 1: 제목"   아래에 "**제목**", "**장르**", "**스타일** (…자)", "**가사** (…자)",
+            "**썸네일 이미지 프롬프트**", "**배경 영상 프롬프트**" (굵은 글씨 항목, 가사 있는 보컬곡)
   경음악:   "## Track 1. 제목"  아래에 "### 구조 태그 (가사 칸 대신 → 텍스트 박스)",
             "### 썸네일 이미지 생성 프롬프트", "### 뮤직 비디오 콘셉트 → ..."
 각 항목의 내용은 그 제목 바로 아래 ``` 코드 블록이다.
@@ -20,6 +22,7 @@ from pathlib import Path
 STYLE_MAX_LEN = 1000  # CAVN 음악 스타일 칸 글자 제한
 
 HEADING_RE = re.compile(r"^(#{1,6})\s*(.+?)\s*$", re.M)
+BOLD_LABEL_RE = re.compile(r"^\*\*([^*\n]+?)\*\*", re.M)   # 사크리드: "**스타일** (474자)" 처럼 굵은 글씨 항목
 TRACK_RE = re.compile(r"^(?:Track|트랙)\s*(\d+)\s*[.:]\s*(.+)$", re.I)
 CODE_RE = re.compile(r"```[^\n]*\n(.*?)\n?```", re.S)
 COMMON_EXCLUDE_RE = re.compile(
@@ -99,6 +102,9 @@ def clean_title(title):
 
 def parse_md(text):
     headings = [(m.start(), m.end(), len(m.group(1)), m.group(2)) for m in HEADING_RE.finditer(text)]
+    # 굵은 글씨 항목은 가장 깊은 단계의 제목으로 본다 (트랙 범위는 끊지 않음)
+    headings += [(m.start(), m.end(), 7, m.group(1).strip()) for m in BOLD_LABEL_RE.finditer(text)]
+    headings.sort()
     common_exclude = ""
     m = COMMON_EXCLUDE_RE.search(text)
     if m:
