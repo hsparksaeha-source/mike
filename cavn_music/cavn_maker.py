@@ -834,7 +834,7 @@ def connect(pw):
 
 
 def run(md_path, out_root, only=None, dry_run=False, page=None,
-        create_url=CREATE_URL, albums_url=ALBUMS_URL, confirm=True, master=None):
+        create_url=CREATE_URL, albums_url=ALBUMS_URL, confirm=True, master=None, ask_album=True):
     md_path = Path(md_path)
     album = md_path.stem
     tracks = parse_md_file(md_path)
@@ -875,6 +875,8 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
             album_name = cavn.ensure_album(album)
         except Exception as e:  # 자동으로 못 만들면 사람이 만들고 이어서 진행
             log(f"!! 앨범을 자동으로 만들지 못했습니다: {str(e).splitlines()[0]}")
+            if not ask_album:   # 일괄 작업(사람이 없을 수 있음): 멈춰 기다리지 않고 이 단계를 실패로
+                raise RuntimeError(f"앨범 '{album}' 을 만들지 못했습니다. CAVN 에서 직접 만든 뒤 다시 실행해 주세요.")
             print(f"크롬에서 앨범 '{album}' 을(를) 직접 만들어 주세요.")
             input("다 만들었으면 Enter 를 누르세요... ")
             album_name = album
