@@ -49,6 +49,7 @@ BIG_WORD_GAP = 0.45         # 낱말 사이를 더 띄움 (글자 크기의 배�
 BIG_STROKE = 0.09           # 테두리 두께 (글자 크기의 배수)
 SMALL_PX = 50               # 왼쪽 위 영어 글자 크기
 SMALL_MARGIN = (40, 28)
+CAPCUT_STROKE = 60.0        # 캡컷 '사전 설정 스타일' 첫 번째(흰 글씨 + 검정 테두리), 테두리 두께 60 — 모든 글씨
 CAPCUT_PX_PER_SIZE = 9.0    # 캡컷 글자 크기 1 ≈ 9px (1080p 화면 기준, 대략)
 
 
@@ -363,7 +364,7 @@ def render_jpg(bg_path, option, english, fonts, out_path):
         _draw_line(draw, (WIDTH - w) / 2 + stroke, base, line, px, fonts, stroke, BIG_WORD_GAP)
     x, y = SMALL_MARGIN
     for line in english:
-        _draw_line(draw, x, y + SMALL_PX * 0.85, line, SMALL_PX, fonts, 3)
+        _draw_line(draw, x, y + SMALL_PX * 0.85, line, SMALL_PX, fonts, max(3, round(SMALL_PX * BIG_STROKE)))
         y += SMALL_PX * 1.15
     out_path.parent.mkdir(parents=True, exist_ok=True)
     quality = 92
@@ -441,14 +442,14 @@ def build_capcut(draft_dir, name, bg_path, option, english, fonts):
     for k, (line, px, _, base) in enumerate(big_layout(option.lines, fonts), 1):
         center_y = base - px * 0.36
         script.add_track(cc.TrackType.text, f"큰 문구 {k}")
-        script.add_segment(_text_segment(cc, line, length, px / CAPCUT_PX_PER_SIZE, fonts, 60.0,
+        script.add_segment(_text_segment(cc, line, length, px / CAPCUT_PX_PER_SIZE, fonts, CAPCUT_STROKE,
                                          (0.0, (HEIGHT / 2 - center_y) / (HEIGHT / 2)), 1), f"큰 문구 {k}")
     x, y = SMALL_MARGIN
     for k, line in enumerate(english, 1):
         script.add_track(cc.TrackType.text, f"영어 {k}")
         w = _measure(line, SMALL_PX, fonts)[0]
         cx, cy = x + w / 2, y + SMALL_PX * 0.55
-        script.add_segment(_text_segment(cc, line, length, SMALL_PX / CAPCUT_PX_PER_SIZE, fonts, 30.0,
+        script.add_segment(_text_segment(cc, line, length, SMALL_PX / CAPCUT_PX_PER_SIZE, fonts, CAPCUT_STROKE,
                                          ((cx - WIDTH / 2) / (WIDTH / 2), (HEIGHT / 2 - cy) / (HEIGHT / 2)), 0), f"영어 {k}")
         y += SMALL_PX * 1.15
     script.save()
