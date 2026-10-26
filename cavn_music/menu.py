@@ -1,4 +1,4 @@
-"""음악 · 이미지 자동화 메뉴: 1 = 음악(CAVN), 2 = 이미지·영상(Flow), 3 = 둘 다"""
+"""음악 · 이미지 자동화 메뉴: 1 = 음악(CAVN), 2 = 이미지·영상(Flow), 3 = 둘 다, 4 = 썸네일"""
 
 import subprocess
 import sys
@@ -15,9 +15,13 @@ def main():
     print("\n  1 = 음악 만들기 (CAVN AI)")
     print("  2 = 이미지 15장 + 영상 만들기 (Google Flow, 경음악·클래식만)")
     print("  3 = 둘 다 (음악 먼저, 이어서 이미지)")
+    print("  4 = 유튜브 썸네일 만들기 (Flow 배경 + 캡컷 초안)")
     choice = ""
-    while choice not in ("1", "2", "3"):
-        choice = input("번호를 고르세요 (1/2/3): ").strip()
+    while choice not in ("1", "2", "3", "4"):
+        choice = input("번호를 고르세요 (1/2/3/4): ").strip()
+    if choice == "4":
+        subprocess.run([sys.executable, "-u", str(HERE / "thumb_maker.py"), md])
+        return
     only = ask_only()
     extra = ["--only", ",".join(map(str, sorted(only)))] if only else []
     scripts = {"1": ["cavn_maker.py"], "2": ["flow_maker.py"], "3": ["cavn_maker.py", "flow_maker.py"]}[choice]

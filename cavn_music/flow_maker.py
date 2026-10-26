@@ -720,6 +720,42 @@ def track_done(image_folder, scene_dir, number, n_images):
     return sum(f.suffix.lower() in IMAGE_EXTS for f in image_folder.iterdir()) >= n_images
 
 
+# ---------------------------------------------------------------- 이미지 만들기·받기 (썸네일 프로그램도 씀)
+
+def request_images(flow, prompt, n_images):
+    """에이전트에 프롬프트 + 'N장 만들어 줘'를 보내고 새 이미지 N장이 생길 때까지 기다린다."""
+    before = {t["key"] for t in flow.tiles()}
+    log(f"  이미지 {n_images}장 요청")
+    flow.send_prompt(f"{prompt}\n\n{IMAGE_REQUEST.format(n=n_images)}")
+    images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)
+    images = images[:n_images] if len(images) > n_images else images
+    log(f"  이미지 {len(images)}장 완성")
+    return images
+
+
+def collect_images(flow, images, folder):
+    """새 컬렉션에 이미지를 넣고 컬렉션 다운로드 → folder 에 이미지 저장. 받은 장수를 돌려준다."""
+    folder.mkdir(parents=True, exist_ok=True)
+    log("  새 컬렉션 만들고 이미지 넣기")
+    flow.new_collection()
+    for i, img in enumerate(images, 1):
+        source = flow.tile(img["key"], refresh=True)
+        flow.drag(source, flow.tile(flow.first_collection()))
+        if i % 5 == 0:
+            log(f"    {i}/{len(images)}장 넣음")
+
+    log("  컬렉션 다운로드")
+    count = 0
+    for path in flow.download_collection(flow.first_collection(), folder, len(images)):
+        if path.suffix.lower() == ".zip":
+            count += extract_images(path, folder)
+            path.unlink()
+        else:
+            count += 1
+    log(f"    이미지 {count}장 저장 → {folder}")
+    return count
+
+
 # ---------------------------------------------------------------- 트랙 하나
 
 def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False):
@@ -733,12 +769,7 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
             raise RuntimeError(f"Flow 화면에 이미지가 {len(images)}장뿐이라 기존 이미지를 쓸 수 없습니다.")
         log(f"  Flow 화면 맨 앞의 기존 이미지 {len(images)}장을 씁니다 (새로 만들지 않음)")
     else:
-        before = {t["key"] for t in flow.tiles()}
-        log(f"  이미지 {n_images}장 요청")
-        flow.send_prompt(f"{track.image_prompt}\n\n{IMAGE_REQUEST.format(n=n_images)}")
-        images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)
-        images = images[:n_images] if len(images) > n_images else images
-        log(f"  이미지 {len(images)}장 완성")
+        images = request_images(flow, track.image_prompt, n_images)
 
     if reuse_video:
         # 이 트랙 영상도 이미 만들어 둠 → 격자 맨 앞의 영상을 쓴다 (크레딧 안 씀)
@@ -757,23 +788,7 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
         log("  영상 완성")
 
-    log("  새 컬렉션 만들고 이미지 넣기")
-    flow.new_collection()
-    for i, img in enumerate(images, 1):
-        source = flow.tile(img["key"], refresh=True)
-        flow.drag(source, flow.tile(flow.first_collection()))
-        if i % 5 == 0:
-            log(f"    {i}/{len(images)}장 넣음")
-
-    log("  컬렉션 다운로드")
-    count = 0
-    for path in flow.download_collection(flow.first_collection(), folder, len(images)):
-        if path.suffix.lower() == ".zip":
-            count += extract_images(path, folder)
-            path.unlink()
-        else:
-            count += 1
-    log(f"    이미지 {count}장 저장 → {folder}")
+    count = collect_images(flow, images, folder)
     if count < len(images):
         log(f"    !! {len(images)}장 중 {count}장만 받았습니다. 다시 실행하면 이 트랙을 다시 합니다.")
 
