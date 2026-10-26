@@ -50,7 +50,7 @@ BIG_STROKE = 0.09           # 테두리 두께 (글자 크기의 배수)
 SMALL_PX = 50               # 왼쪽 위 영어 글자 크기
 SMALL_MARGIN = (40, 28)
 CAPCUT_STROKE = 60.0        # 캡컷 '사전 설정 스타일' 첫 번째(흰 글씨 + 검정 테두리), 테두리 두께 60 — 모든 글씨
-CAPCUT_PX_PER_SIZE = 9.0    # 캡컷 글자 크기 1 ≈ 9px (1080p 화면 기준, 대략)
+CAPCUT_PX_PER_SIZE = 12.6   # 캡컷 글자 크기 1 ≈ 12.6px (1080p 화면, 실제 캡컷 화면에서 잰 값)
 
 
 def log(msg):
@@ -332,9 +332,14 @@ def big_layout(lines, fonts):
     for line in lines:
         px, _ = _fit_px(line, fonts)
         words = line.split(" ")
+        cut = None
         if px < BIG_MAX_PX * 0.72 and len(words) >= 2:
             half = len(line) / 2
             cut = min(range(1, len(words)), key=lambda k: abs(len(" ".join(words[:k])) - half))
+            short = min(len(" ".join(words[:cut])), len(" ".join(words[cut:])))
+            if short < len(line) * 0.3:   # '16곡' 처럼 한쪽이 너무 짧게 남으면 나누지 않음
+                cut = None
+        if cut:
             out_lines += [" ".join(words[:cut]), " ".join(words[cut:])]
         else:
             out_lines.append(line)
