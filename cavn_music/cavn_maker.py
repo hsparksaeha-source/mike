@@ -38,6 +38,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
+from song_order import fix_song_order
 from md_parser import ask_md_path, ask_only, parse_only, STYLE_MAX_LEN, parse_md_file  # noqa: E402
 from thumb_agent.browser import start_real_chrome  # noqa: E402
 
@@ -863,7 +864,10 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
     new = sum(1 for _, state in todo if state == "todo")
     credits = new * CREDITS_PER_SONG + len(todo) * master * CREDITS_PER_SONG
     print(f"\n만들 곡 {new}개 (곡마다 2곡 생성), 마스터링 {len(todo) * master}곡 → 약 {credits}크레딧")
-    if dry_run or not todo:
+    if dry_run:
+        return
+    if not todo:
+        fix_song_order(out_dir, tracks)   # 받을 곡이 없어도 날짜 순서는 맞춰 둔다
         return
     if confirm and input("시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
         return
@@ -896,6 +900,8 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
                 cavn.open_create()
                 cavn.select_album(album_name, "right")
         print()
+        # 캡컷 조립 프로그램은 노래 파일을 날짜순으로 줄 세우므로, 나중에 받은 곡이 뒤로 가지 않게
+        fix_song_order(out_dir, tracks)
         log(f"끝. 성공 {len(todo) - len(failed)}곡, 실패 {len(failed)}곡")
         for t in failed:
             print(f"  실패: {t.number}. {t.title}  (다시 실행하면 이 곡부터 이어서 합니다)")
