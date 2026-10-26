@@ -378,12 +378,6 @@ def render_jpg(bg_path, option, english, fonts, out_path):
 
 # ---------------------------------------------------------------- 캡컷 초안 (글씨를 고칠 수 있게)
 
-def default_capcut_dir():
-    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-    path = local / "CapCut" / "User Data" / "Projects" / "com.lveditor.draft"
-    return path if path.is_dir() else None
-
-
 def _capcut():
     try:
         import pycapcut
@@ -491,7 +485,8 @@ def run(md_path, out_root, use_flow=True, capcut_dir=None, page=None, confirm=Tr
     tracks = parse_md(text)
     album_dir = Path(out_root) / safe_filename(md_path.stem)
     out_dir = album_dir / "썸네일"
-    capcut_dir = Path(capcut_dir) if capcut_dir else (default_capcut_dir() or out_dir / "CapCut Drafts")
+    # 캡컷 초안도 썸네일 폴더 안에 (음악·이미지와 같은 F:\음악생성\<md>\ 아래에서 관리)
+    capcut_dir = Path(capcut_dir) if capcut_dir else out_dir / "CapCut Drafts"
 
     print(f"\nmd 파일 : {md_path.name}\n썸네일  : {out_dir}\n캡컷 초안: {capcut_dir}\n")
     if not thumbs:
@@ -565,7 +560,7 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--no-flow", action="store_true", help="Flow 로 배경을 만들지 않음 (받아 둔 배경만 씀)")
     ap.add_argument("--images", type=int, default=BG_IMAGES, help=f"썸네일마다 배경 그림 수 (기본 {BG_IMAGES})")
-    ap.add_argument("--capcut", help="캡컷 초안 저장 폴더 (기본: 캡컷 기본 초안 폴더)")
+    ap.add_argument("--capcut", help="캡컷 초안 저장 폴더 (기본: 썸네일\\CapCut Drafts)")
     args = ap.parse_args()
     md = ask_md_path(args.md)
     run(md, args.out, use_flow=not args.no_flow, capcut_dir=args.capcut, n_images=args.images)
