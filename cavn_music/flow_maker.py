@@ -665,13 +665,17 @@ class Flow:
                     dest.rename(fixed)
                     dest = fixed
                 saved.append(dest)
-            if not saved and folder_files:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 복사
-                log(f"    ('{folder_files[0].parent}' 에 저장된 {len(folder_files)}개를 복사합니다)")
+            if not saved and folder_files:   # 크롬이 '다운로드' 폴더에 직접 저장한 경우 → 그 파일을 옮김
+                # (복사하면 다운로드 폴더에 '제목 없는 컬렉션' 파일이 계속 쌓여서 어느 앨범 것인지 헷갈림)
+                log(f"    ('{folder_files[0].parent}' 에 저장된 {len(folder_files)}개를 옮깁니다)")
                 for f in folder_files:
                     kind = sniff_ext(f)
                     name = f.name if f.suffix.lower() == kind else f.stem + kind
                     dest = unique_path(Path(dest_dir), name)
-                    shutil.copy2(f, dest)
+                    try:
+                        shutil.move(str(f), str(dest))
+                    except OSError:   # 크롬이 아직 잡고 있으면 복사만
+                        shutil.copy2(f, dest)
                     saved.append(dest)
             if not saved:
                 raise RuntimeError("받은 파일이 이미지·영상이 아니거나 덜 받아졌습니다.")
