@@ -39,6 +39,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
 from song_order import fix_song_order
+from log_file import record
 from md_parser import ask_md_path, ask_only, parse_only, STYLE_MAX_LEN, parse_md_file  # noqa: E402
 from thumb_agent.browser import start_real_chrome  # noqa: E402
 
@@ -982,10 +983,11 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
             print(f"  실패: {t.number}. {t.title}  (다시 실행하면 이 곡부터 이어서 합니다)")
         print(f"저장 폴더: {out_dir}")
 
-    if page is not None:
-        return work(page)
-    with sync_playwright() as pw:
-        work(connect(pw))
+    with record(out_dir.parent / "노래작업기록.txt"):   # 실행 기록을 앨범 폴더에도 남김
+        if page is not None:
+            return work(page)
+        with sync_playwright() as pw:
+            work(connect(pw))
 
 
 def main():

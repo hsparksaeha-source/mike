@@ -24,6 +24,7 @@ from pathlib import Path
 import cavn_maker
 import flow_maker
 import thumb_maker
+from log_file import Tee
 from md_parser import parse_md_file
 
 DEFAULT_OUT = r"F:\음악생성"
@@ -33,26 +34,6 @@ NO = ("n", "no", "ㅜ", "아니요", "아니오")
 
 def now():
     return time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-class Tee:
-    """까만 창에 나오는 글을 기록 파일에도 같이 적는다."""
-
-    def __init__(self, stream, path):
-        self.stream = stream
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.file = open(path, "a", encoding="utf-8")
-
-    def write(self, text):
-        self.stream.write(text)
-        self.file.write(text)
-        self.file.flush()
-
-    def flush(self):
-        self.stream.flush()
-
-    def close(self):
-        self.file.close()
 
 
 def split_paths(line):

@@ -34,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
+from log_file import record
 from md_parser import ask_md_path, ask_only, parse_only, parse_md_file  # noqa: E402
 from thumb_agent.browser import start_real_chrome  # noqa: E402
 
@@ -993,10 +994,11 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
             print(f"  실패: {t.number}. {t.title}  (다시 실행하면 이 트랙부터 이어서 합니다)")
         print(f"저장 폴더: {out_dir}")
 
-    if page is not None:
-        return work(page)
-    with sync_playwright() as pw:
-        work(connect(pw))
+    with record(album_dir / "Flow작업기록.txt"):   # 실행 기록을 앨범 폴더에도 남김
+        if page is not None:
+            return work(page)
+        with sync_playwright() as pw:
+            work(connect(pw))
 
 
 def main():
