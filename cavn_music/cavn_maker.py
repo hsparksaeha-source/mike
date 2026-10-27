@@ -50,6 +50,7 @@ DEBUG_PORT = 9224  # CAVN·Flow 가 같은 전용 크롬을 함께 씀 (썸네�
 
 POP_STYLE_INCLUDES_GENRE = True  # 가요/팝: 음악 스타일 칸에 '장르'도 앞에 붙여 넣음
 GENERATE_TIMEOUT_SEC = 30 * 60   # 곡 생성 최대 대기 (주말엔 느릴 수 있어 넉넉히)
+NO_START_SEC = 10 * 60           # 이 시간 동안 목록에 새 곡이 하나도 안 나타나면 생성이 시작되지 않은 것으로 봄
 DOWNLOAD_TIMEOUT_MS = 300_000
 MASTER_STYLE = "밝고 선명한"     # AI 마스터링 스타일
 MASTER_TIMEOUT_SEC = 20 * 60     # 마스터링 처리 최대 대기
@@ -70,6 +71,13 @@ TEXT_LYRIC_ITEMS = [
     ("텍스트 가사 다운로드", "가사 본문만", "_가사본문", ".txt"),
 ]
 LONG_ITEMS = AUDIO_ITEMS[:3] + TEXT_LYRIC_ITEMS + AUDIO_ITEMS[3:]   # mp3, wav, lrc, 텍스트 가사 2개, 커버
+# 연주곡(클래식·경음악)은 가사가 없어서 스크롤 가사·텍스트 가사 메뉴가 눌리지 않음 → mp3, wav, 커버만
+INSTRUMENTAL_ITEMS = [it for it in AUDIO_ITEMS if it[3] != ".lrc"]
+
+
+def items_for(instrumental):
+    """(긴 곡 항목, 짧은 곡 항목)"""
+    return (INSTRUMENTAL_ITEMS, INSTRUMENTAL_ITEMS) if instrumental else (LONG_ITEMS, AUDIO_ITEMS)
 
 
 def log(msg):
@@ -425,18 +433,56 @@ class Cavn:
         return not GENERATING_RE.search(text)
 
     def wait_new_rows(self, title, before):
-        deadline = time.time() + GENERATE_TIMEOUT_SEC
+        start = time.time()
+        deadline = start + GENERATE_TIMEOUT_SEC
         last_note = 0
+        shot_taken = False
         while time.time() < deadline:
             rows = self.song_rows(title)
             if len(rows) >= before + 2 and all(self.row_ready(r) for r in rows[:2]):
                 time.sleep(5)
                 return self.song_rows(title)[:2]
+            if not shot_taken and time.time() - start > 30:
+                self.save_screen(title, "지금만들기_30초후")   # 무슨 일이 있었는지 나중에 볼 수 있게
+                shot_taken = True
+            if len(rows) <= before and time.time() - start > NO_START_SEC:
+                path = self.save_screen(title, "생성안됨")
+                notes = self.screen_messages()
+                raise RuntimeError(f"{NO_START_SEC // 60}분 동안 목록에 새 곡이 나타나지 않았습니다 (CAVN 이 곡을 만들지 않은 것 같음)."
+                                   + (f" 화면 안내: {notes}" if notes else "") + (f" 화면 저장: {path}" if path else ""))
             if time.time() - last_note > 60:
                 log(f"  생성 기다리는 중... (목록에 같은 제목 {len(rows)}개)")
                 last_note = time.time()
             time.sleep(5)
-        raise RuntimeError("곡 생성이 제한 시간 안에 끝나지 않았습니다.")
+        path = self.save_screen(title, "시간초과")
+        raise RuntimeError("곡 생성이 제한 시간 안에 끝나지 않았습니다." + (f" 화면 저장: {path}" if path else ""))
+
+    def save_screen(self, title, what):
+        """지금 CAVN 화면을 노래\\_확인화면\\ 에 저장 (밤새 돌릴 때 무슨 일이 있었는지 보려고)."""
+        if not getattr(self, "shot_dir", None):
+            return None
+        try:
+            self.shot_dir.mkdir(parents=True, exist_ok=True)
+            path = self.shot_dir / f"{time.strftime('%m%d_%H%M%S')}_{safe_filename(title)}_{what}.png"
+            self.page.screenshot(path=str(path))
+            return path
+        except (PlaywrightError, OSError):
+            return None
+
+    def screen_messages(self):
+        """화면에 떠 있는 알림·오류 글 (있으면)."""
+        try:
+            return self.page.evaluate("""() => {
+                const out = new Set();
+                for (const e of document.querySelectorAll('[role=alert],[role=status],[class*=toast],[class*=Toast],[class*=error],[class*=Error]')) {
+                    const t = (e.innerText || '').replace(/\\s+/g, ' ').trim();
+                    const r = e.getBoundingClientRect();
+                    if (t && t.length < 200 && r.width > 0 && r.height > 0) out.add(t);
+                }
+                return [...out].slice(0, 5).join(' / ');
+            }""")
+        except PlaywrightError:
+            return ""
 
     # -- 곡 길이 (앨범 자켓을 눌러 재생 → 재생바 시간)
     def _player_total(self):
@@ -679,7 +725,8 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
     long_base = out_dir / fname
     short_base = out_dir / f"{fname} (1)"
 
-    if status(out_dir, title, master) == "need_extra":
+    long_items, short_items = items_for(track.classical)
+    if status(out_dir, title, master, track.classical) == "need_extra":
         # 곡(wav 2개)은 이미 받았고 텍스트 가사나 마스터링만 빠짐 → 새로 만들지 않고 빠진 것만
         log("  곡은 이미 받았으니 빠진 파일(텍스트 가사·마스터링)만 받습니다.")
         cavn.wait_list_loaded()
@@ -690,7 +737,7 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
         if long_i is None:   # 기록이 없으면 재생바 길이로
             lengths = [cavn.song_length(r) for r in rows]
             long_i = 0 if (lengths[0] or 0) >= (lengths[1] or 0) else 1
-        for i, base, items in ((long_i, long_base, LONG_ITEMS), (1 - long_i, short_base, AUDIO_ITEMS)):
+        for i, base, items in ((long_i, long_base, long_items), (1 - long_i, short_base, short_items)):
             missing = [it for it in items if not has_file(base, it)]
             if missing:
                 download_song(cavn, rows[i], base, missing)
@@ -720,7 +767,7 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
     tmp.mkdir(exist_ok=True)
     for i, row in enumerate(rows):
         log(f"  {i + 1}번째 곡 받기")
-        download_song(cavn, row, tmp / f"{fname}__{i}", AUDIO_ITEMS)
+        download_song(cavn, row, tmp / f"{fname}__{i}", short_items)
     sizes = [_size(tmp / f"{fname}__{i}.wav") for i in range(2)]
     if not all(sizes):
         log("  !! wav 를 다 받지 못해 긴 곡을 정할 수 없습니다. 받은 파일은 .받는중 폴더에 있습니다.")
@@ -732,8 +779,9 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
             shutil.move(str(f), str(base) + f.suffix)
     shutil.rmtree(tmp, ignore_errors=True)
     save_long_i(out_dir, title, long_i)
-    log("  긴 곡 텍스트 가사 받기")
-    download_song(cavn, rows[long_i], long_base, TEXT_LYRIC_ITEMS)
+    if not track.classical:   # 연주곡은 가사가 없음
+        log("  긴 곡 텍스트 가사 받기")
+        download_song(cavn, rows[long_i], long_base, TEXT_LYRIC_ITEMS)
 
     if master:
         master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
@@ -761,7 +809,7 @@ def _size(path):
     return path.stat().st_size if path.exists() else 0
 
 
-def status(out_dir, title, master=0):
+def status(out_dir, title, master=0, instrumental=False):
     """'todo' = 곡을 만들어야 함, 'need_extra' = 곡은 받았고 텍스트 가사·마스터링이 빠짐, 'done' = 끝."""
     fname = safe_filename(title)
     if not ((out_dir / f"{fname}.wav").exists() and (out_dir / f"{fname} (1).wav").exists()):
@@ -769,8 +817,9 @@ def status(out_dir, title, master=0):
     if master and not (out_dir / f"{fname}_mastered.wav").exists():
         return "need_extra"
     long_base, short_base = out_dir / fname, out_dir / f"{fname} (1)"
-    if not all(has_file(long_base, it) for it in LONG_ITEMS) or \
-            not all(has_file(short_base, it) for it in AUDIO_ITEMS):
+    long_items, short_items = items_for(instrumental)
+    if not all(has_file(long_base, it) for it in long_items) or \
+            not all(has_file(short_base, it) for it in short_items):
         return "need_extra"
     return "done"
 
@@ -854,7 +903,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
     marks = {"done": "완료(건너뜀)", "need_extra": "빠진 파일만 받음 (곡은 새로 만들지 않음)"}
     for t in tracks:
         style_len = len(t.style_box(POP_STYLE_INCLUDES_GENRE))
-        state = status(out_dir, t.title, master)
+        state = status(out_dir, t.title, master, t.classical)
         mark = marks.get(state) or ("!! 스타일 1000자 초과" if style_len > STYLE_MAX_LEN else "")
         print(f"  {t.number:>2}. {t.title}  (스타일 {style_len}자) {mark}")
         for w in t.warnings:
@@ -875,6 +924,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
 
     def work(page):
         cavn = Cavn(page, create_url, albums_url)
+        cavn.shot_dir = out_dir / "_확인화면"   # 생성이 안 될 때 CAVN 화면을 저장하는 곳
         try:
             album_name = cavn.ensure_album(album)
         except Exception as e:  # 자동으로 못 만들면 사람이 만들고 이어서 진행

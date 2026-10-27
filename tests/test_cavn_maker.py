@@ -223,7 +223,8 @@ def test_classical_flow_and_resume(tmp_path):
     assert c["instrumental"] and c["lyrics"] == ""
     assert c["title"] == "Warm Socks, Slow Morning" and c["gender"] == "여성"   # 클래식은 무조건 여성
     assert c["style"].endswith("[Outro] (gentle cadence, slowly fading)")
-    assert len([p for p in songs.iterdir() if not p.name.startswith(".")]) == 10
+    # 연주곡은 가사가 없어서 곡마다 mp3, wav, 커버만 (긴 곡·짧은 곡 = 6개)
+    assert len([p for p in songs.iterdir() if p.is_file() and not p.name.startswith(".")]) == 6
     # 다시 실행하면 이미 받은 곡은 건너뜀
     _, state2 = run_mock(tmp_path, CLASSICAL_MD, "바흐풍_겨울마을.md", "190,170")
     assert state2["created"] == []   # 곡 만들기를 누르지 않음
@@ -255,7 +256,8 @@ def test_reuse_songs_already_made(tmp_path):
     songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", masters=(0, 0),
                                       between=lambda out: [p.unlink() for p in out.iterdir()])
     assert len(first["created"]) == 1 and second["created"] == first["created"]
-    assert len([p for p in songs.iterdir() if not p.name.startswith(".")]) == 10
+    # 연주곡은 가사가 없어서 곡마다 mp3, wav, 커버만 (긴 곡·짧은 곡 = 6개)
+    assert len([p for p in songs.iterdir() if p.is_file() and not p.name.startswith(".")]) == 6
 
 
 def test_resume_missing_lyrics_and_mastering(tmp_path):
