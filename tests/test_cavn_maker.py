@@ -162,7 +162,7 @@ def test_parse_classical():
     assert t.exclude == "drum kit, vocal, harpsichord"
 
 
-def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,), between=None):
+def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,), between=None, extra=""):
     """같은 브라우저(=같은 가짜 사이트 기록)에서 masters 개수만큼 이어서 실행한다."""
     md = tmp_path / md_name
     md.write_text(md_text, encoding="utf-8")
@@ -176,7 +176,7 @@ def run_mock(tmp_path, md_text, md_name, lengths, masters=(0,), between=None):
             if n and between:
                 between(out / md.stem / "노래")
             cavn_maker.run(md, out, page=page, confirm=False, master=master,
-                           create_url=f"{MOCK}?page=create&delay=1500&lengths={lengths}",
+                           create_url=f"{MOCK}?page=create&delay=1500&lengths={lengths}{extra}",
                            albums_url=f"{MOCK}?page=albums")
             page.goto(MOCK)
             states.append(page.evaluate("""() => ({
@@ -256,8 +256,7 @@ def test_reuse_songs_already_made(tmp_path):
     songs, (first, second) = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", masters=(0, 0),
                                       between=lambda out: [p.unlink() for p in out.iterdir()])
     assert len(first["created"]) == 1 and second["created"] == first["created"]
-    # 연주곡은 가사가 없어서 곡마다 mp3, wav, 커버만 (긴 곡·짧은 곡 = 6개)
-    assert len([p for p in songs.iterdir() if p.is_file() and not p.name.startswith(".")]) == 6
+    assert len([p for p in songs.iterdir() if p.is_file() and not p.name.startswith(".")]) == 10
 
 
 def test_resume_missing_lyrics_and_mastering(tmp_path):
@@ -436,3 +435,13 @@ def test_parse_sacred_bold_labels():
     assert t1.image_prompt.startswith("A long rustic") and t1.video_prompt.startswith("Slow gentle")
     assert t1.gender() == "여성"
     assert t2.lyrics == "[Verse] Locus iste" and not t2.warnings
+
+
+def test_long_album_list_uses_search(tmp_path):
+    """곡이 많아 목록에 일부만 보여도(limit=1) 검색칸으로 찾는다.
+    (못 찾으면 이미 만든 곡을 또 만들어서 크레딧이 두 번 들던 문제)"""
+    songs, (first, second) = run_mock(tmp_path, POP_MD, "칸쏘네.md", "150,200", masters=(0, 0),
+                                      between=lambda out: [p.unlink() for p in out.glob("Un*")], extra="&limit=1")
+    assert [c["title"] for c in first["created"]] == ["You Were Already There", "Un'Estate Soltanto"]
+    assert second["created"] == first["created"]          # 두 번째 실행: 새로 만들지 않고 목록에서 찾아 받음
+    assert (songs / "Un'Estate Soltanto.wav").exists() and (songs / "Un'Estate Soltanto (1).wav").exists()

@@ -63,7 +63,7 @@
   </div>
   <div id="right">
     <button id="rightAlbum" aria-haspopup="listbox"></button>
-    <input type="text" placeholder="곡 검색...">
+    <input type="text" id="search" placeholder="곡 검색...">
     <div id="list"></div>
   </div>
   <div id="player"><span id="ptitle"></span> <span id="ptime">00:00 / 00:00</span></div>
@@ -188,7 +188,12 @@ if (page === "albums") {
     albumButton("left"); albumButton("right");
     const list = document.getElementById("list");
     list.innerHTML = "";
-    songs.filter(s => s.album === current.right).forEach(s => {
+    // 실제 CAVN 처럼 곡이 많으면 목록에 일부만 보임 (limit). 검색하면 그 제목만 나옴
+    const q = document.getElementById("search").value.trim().toLowerCase();
+    const limit = Number(params.get("limit") || 0);
+    let shownSongs = songs.filter(s => s.album === current.right && (!q || s.title.toLowerCase().includes(q)));
+    if (limit && !q) shownSongs = shownSongs.slice(0, limit);
+    shownSongs.forEach(s => {
       const row = document.createElement("div");
       row.className = "row";
       // 실제 화면처럼 제목 옆에 안 보이는 '더 보기'가 하나 더 숨어 있음
@@ -209,6 +214,7 @@ if (page === "albums") {
   setInterval(() => {
     if (songs.some(s => !s.shown && ready(s))) { songs.forEach(s => s.shown = ready(s)); redraw(); }
   }, 300);
+  document.getElementById("search").addEventListener("input", () => setTimeout(redraw, 300));
 
   function openMenu(s) {
     closeAll();

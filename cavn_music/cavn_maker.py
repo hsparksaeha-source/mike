@@ -380,6 +380,24 @@ class Cavn:
         btn[0].click()
 
     # -- 곡 목록
+    def search(self, title):
+        """오른쪽 목록 위 '곡 검색' 칸에 제목을 넣는다.
+        곡이 많은 앨범은 목록에 일부만 보여서, 검색하지 않으면 이미 만든 곡이나 새로 만든 곡을 못 찾는다
+        (못 찾으면 새로 또 만들어서 크레딧이 두 번 듦)."""
+        boxes = self._visible(self.page.locator("input[placeholder*='검색'], input[type=search]"), "right")
+        if not boxes:
+            return False
+        box = boxes[0]
+        try:
+            box.fill("")
+            box.fill(title)
+            box.press("Enter")
+        except PlaywrightError:
+            return False
+        time.sleep(2)
+        self.wait_list_loaded(wait=10)
+        return True
+
     def song_rows(self, title):
         """오른쪽 목록에서 이 제목의 곡 줄들 (위에서부터).
         화면에 보이는 [더 보기]에서 출발해 제목이 들어 있는 가장 가까운 상자 = 곡 한 줄.
@@ -437,7 +455,11 @@ class Cavn:
         deadline = start + GENERATE_TIMEOUT_SEC
         last_note = 0
         shot_taken = False
+        last_search = time.time()
         while time.time() < deadline:
+            if time.time() - last_search > 60:   # 목록이 저절로 안 바뀔 수 있어서 1분마다 다시 검색
+                self.search(title)
+                last_search = time.time()
             rows = self.song_rows(title)
             if len(rows) >= before + 2 and all(self.row_ready(r) for r in rows[:2]):
                 time.sleep(5)
@@ -730,6 +752,7 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
         # 곡(wav 2개)은 이미 받았고 텍스트 가사나 마스터링만 빠짐 → 새로 만들지 않고 빠진 것만
         log("  곡은 이미 받았으니 빠진 파일(텍스트 가사·마스터링)만 받습니다.")
         cavn.wait_list_loaded()
+        cavn.search(title)
         rows = cavn.song_rows(title)[:2]
         if len(rows) < 2:
             raise RuntimeError("곡 목록에서 이 제목의 곡 2개를 찾지 못했습니다.")
@@ -750,6 +773,7 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
         raise RuntimeError(f"음악 스타일이 {len(style)}자라 {STYLE_MAX_LEN}자를 넘습니다. md 파일을 줄여 주세요.")
 
     cavn.wait_list_loaded()
+    cavn.search(title)
     existing = cavn.song_rows(title)
     if len(existing) >= 2 and all(cavn.row_ready(r) for r in existing[:2]):
         # 지난번에 만들어 놓고 못 받은 곡 → 크레딧을 다시 쓰지 않도록 새로 만들지 않고 그 2곡을 받는다
@@ -793,6 +817,7 @@ def master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
         if Path(str(base) + "_mastered.wav").exists():
             continue
         log(f"  {name} AI 마스터링")
+        cavn.search(title)
         rows = cavn.song_rows(title)[:2]  # 화면을 다녀오면 다시 찾아야 함 (순서는 그대로)
         try:
             cavn.master(rows[i], Path(str(base) + "_mastered"))
