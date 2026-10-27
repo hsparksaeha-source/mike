@@ -153,3 +153,24 @@ def test_rerun_after_failure_reuses_made_images_and_video(tmp_path, monkeypatch)
     assert [bool(r["attachment"]) for r in requests] == [False, True]   # 이미지·영상 요청은 처음 한 번씩뿐
     assert len([p for p in folder.iterdir() if p.suffix == ".jpg"]) == 15
     assert not (folder / flow_maker.STATE_NAME).exists()
+
+
+def test_retry_button_and_failed_images(tmp_path, monkeypatch):
+    """Flow 오류 때 대화 창의 [다시 시도]를 누르고, 일부가 '실패'로 끝나면 만들어진 것만 받는다.
+    받은 뒤에는 15장보다 적어도 끝난 트랙으로 친다 (다시 실행해도 그 트랙을 또 만들지 않음)."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    monkeypatch.setattr(flow_maker, "FAIL_SETTLE_SEC", 3)
+    from md_parser import parse_md
+    [track] = parse_md(EASY_MD)
+    folder, scenes = tmp_path / "이미지" / "1번", tmp_path / "장면"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&retry=1&fail=4")
+        flow_maker.make_track(flow_maker.Flow(page), track, folder, scenes, 15)
+        clicked = page.evaluate("[window.retryClicked || 0, window.gridRetry || 0]")
+        browser.close()
+    assert clicked == [1, 0]          # 대화 창의 [다시 시도]만 한 번 누름 (실패 칸의 아이콘은 안 누름)
+    assert len([p for p in folder.iterdir() if p.suffix == ".jpg"]) == 11
+    assert flow_maker.track_done(folder, scenes, 1, 15)

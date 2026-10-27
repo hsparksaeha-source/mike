@@ -138,6 +138,10 @@ function draw() {
         if (dragging && dragging.kind === "image" && !item.members.includes(dragging.id)) item.members.push(dragging.id);
         draw();
       });
+    } else if (item.kind === "failed") {   // 실제 Flow 처럼: 그림 없이 '실패' 안내와 아이콘 버튼만
+      t.innerHTML = `<div class="label">warning 실패 Flow의 수요가 많습니다. 나중에 다시 시도해 주세요.</div>
+        <button class="redo">refresh</button>`;
+      t.querySelector(".redo").onclick = () => { window.gridRetry = (window.gridRetry || 0) + 1; };
     } else if (item.kind === "image") {
       t.draggable = true;
       t.innerHTML = `<img src="${svg(item.id)}" draggable="false"><div class="label">image ${item.label}</div>`;
@@ -221,9 +225,20 @@ function submit() {
     };
   } else if (m) {
     const n = Number(m[1]);
-    for (let i = 0; i < n; i++) {   // 하나씩 생기고, 새 것이 앞에 붙는다
-      setTimeout(() => { items.unshift({id: nextId++, kind: "image", label: "Frozen lake"}); draw(); }, delay + i * 60);
-    }
+    const fail = Number(params.get("fail") || 0);   // 끝의 몇 장은 '실패' 카드로
+    const make = () => {
+      for (let i = 0; i < n; i++) {   // 하나씩 생기고, 새 것이 앞에 붙는다
+        setTimeout(() => { items.unshift({id: nextId++, kind: i >= n - fail ? "failed" : "image", label: "Frozen lake"}); draw(); },
+                   delay + i * 60);
+      }
+    };
+    if (params.get("retry") === "1" && !window.retryShown) {   // 처음 요청은 오류 → [다시 시도]를 눌러야 진행
+      window.retryShown = true;
+      const err = document.createElement("div");
+      err.innerHTML = `<p>문제가 발생했습니다.</p><button class="again"><span>refresh</span> <span>다시 시도</span></button>`;
+      chat.appendChild(err);
+      err.querySelector(".again").onclick = () => { window.retryClicked = (window.retryClicked || 0) + 1; err.remove(); make(); };
+    } else make();
   }
 }
 function onKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }

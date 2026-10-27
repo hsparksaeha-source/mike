@@ -45,6 +45,7 @@ DEBUG_PORT = 9224  # CAVN·Flow 가 같은 전용 크롬을 함께 씀 (썸네�
 
 IMAGES_PER_TRACK = 15
 IMAGE_TIMEOUT_SEC = 20 * 60
+FAIL_SETTLE_SEC = 15      # 일부가 '실패'로 끝났을 때, 더 안 늘면 이만큼 기다렸다가 만들어진 것만으로 진행
 VIDEO_TIMEOUT_SEC = 20 * 60
 DOWNLOAD_TIMEOUT_MS = 5 * 60_000
 IMAGE_REQUEST = "위 프롬프트로 16:9 이미지 {n}장을 만들어 줘."
@@ -354,7 +355,9 @@ class Flow:
         start = time.time()
         last_count, last_change, last_note = -1, time.time(), 0
         before_keys = set(before_keys)
+        fails_before = self.failed_count()
         while time.time() < deadline:
+            self.click_retry()
             was_approved = self.approved
             self.approve()
             if after_approval:
@@ -368,9 +371,13 @@ class Flow:
                     time.sleep(3)
                     continue
             new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
-            if len(new) != last_count:
-                last_count, last_change = len(new), time.time()
+            fails = max(0, self.failed_count() - fails_before)   # Flow 가 못 만든 칸 ('실패 … 수요가 많습니다')
+            if len(new) + fails != last_count:
+                last_count, last_change = len(new) + fails, time.time()
             if len(new) >= want and time.time() - last_change >= settle:
+                return new
+            if new and fails and len(new) + fails >= want and time.time() - last_change >= FAIL_SETTLE_SEC:
+                log(f"  !! Flow 가 {fails}장은 만들지 못했습니다(실패). 만들어진 {len(new)}장으로 진행합니다.")
                 return new
             if new and time.time() - last_change > 180:   # 3분 동안 더 안 생기면 있는 것만 사용
                 log(f"  !! {kind} {len(new)}개만 만들어져서 그대로 진행합니다.")
@@ -380,6 +387,44 @@ class Flow:
                 last_note = time.time()
             time.sleep(3)
         raise RuntimeError(f"{'이미지가' if kind == 'image' else '영상이'} 제한 시간 안에 다 만들어지지 않았습니다.")
+
+    FAILED_JS = """() => [...document.querySelectorAll('*')].filter(e => {
+        const own = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ');
+        const r = e.getBoundingClientRect();
+        return /^\\s*(warning\\s*)?실패(\\s|$)|^\\s*Failed(\\s|$)/.test(own) && r.width > 0 && r.height > 0;
+    }).length"""
+
+    def failed_count(self):
+        """격자에 있는 '실패' 칸 수."""
+        try:
+            return self.page.evaluate(self.FAILED_JS)
+        except PlaywrightError:
+            return 0
+
+    RETRY_RE = re.compile(r"^\s*(refresh\s*)?(다시\s*시도|Try again|Retry)\s*$", re.I)
+
+    def click_retry(self):
+        """대화 창에 오류와 함께 [다시 시도]가 뜨면 누른다 (안 누르면 다음으로 안 넘어감).
+        글자로 '다시 시도'라고 적힌 버튼만 누른다 (격자의 실패 칸에 있는 아이콘 버튼은 누르지 않음)."""
+        try:
+            cands = self.page.get_by_role("button", name=self.RETRY_RE).all() + \
+                self.page.get_by_text(re.compile(r"^\s*다시\s*시도\s*$")).all()
+            for el in cands:
+                # 한 번 누른 버튼(과 그 안의 글씨)은 다시 누르지 않는다
+                if not el.is_visible() or el.evaluate(
+                        "e => !!(e.closest('[data-cavn-retried]') || e.querySelector('[data-cavn-retried]'))"):
+                    continue
+                text = (el.inner_text() or "").strip()
+                if not re.search(r"다시\s*시도|Try again|Retry", text, re.I):
+                    continue
+                el.evaluate("e => (e.closest('button,[role=button]') || e).setAttribute('data-cavn-retried', '1')")
+                el.click()
+                log("  Flow 에 오류가 떠서 [다시 시도]를 눌렀습니다.")
+                time.sleep(3)
+                return True
+        except PlaywrightError:
+            pass
+        return False
 
     def drag(self, source, target):
         page = self.page
@@ -758,10 +803,15 @@ def image_folder(out_dir, number):
     return folder
 
 
+DONE_NAME = ".flow완료"   # Flow 가 일부를 '실패'로 못 만들어서 15장보다 적어도, 만든 것은 다 받았다는 표시
+
+
 def track_done(image_folder, scene_dir, number, n_images):
-    """이미지 n_images장 이상과 영상이 다 있으면 끝난 트랙."""
+    """이미지 n_images장 이상(또는 만든 것 전부를 받았다는 표시)과 영상이 다 있으면 끝난 트랙."""
     if not image_folder.is_dir() or not video_path(scene_dir, number):
         return False
+    if (image_folder / DONE_NAME).exists():
+        return True
     return sum(f.suffix.lower() in IMAGE_EXTS for f in image_folder.iterdir()) >= n_images
 
 
@@ -881,6 +931,8 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         log(f"    !! {len(images)}장 중 {count}장만 받았습니다. 다시 실행하면 기록해 둔 이미지로 이 트랙을 다시 받습니다.")
     else:
         (folder / STATE_NAME).unlink(missing_ok=True)   # 다 받았으니 기록은 지움
+        if count < n_images:   # Flow 가 몇 장을 '실패'로 못 만듦 → 받은 것으로 끝난 트랙으로 침
+            (folder / DONE_NAME).write_text(f"{count}", encoding="utf-8")
 
 
 def download_video(flow, video, scene_dir, number):
