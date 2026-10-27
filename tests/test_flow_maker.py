@@ -123,3 +123,33 @@ def test_image_folder_names(tmp_path):
     assert flow_maker.image_folder(tmp_path, 1) == tmp_path / "1번"
     assert flow_maker.image_folder(tmp_path, 3) == tmp_path / "3번"
     assert (tmp_path / "3번" / "a.jpg").exists() and not (tmp_path / "3").exists()
+
+
+def test_rerun_after_failure_reuses_made_images_and_video(tmp_path, monkeypatch):
+    """이미지·영상을 다 만든 뒤 컬렉션에서 실패해도, 다시 실행하면 새로 만들지 않고 그것을 받는다.
+    (실패한 트랙을 다시 돌릴 때마다 이미지·영상이 또 만들어져 크레딧이 들던 문제)"""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    from md_parser import parse_md
+    [track] = parse_md(EASY_MD)
+    folder, scenes = tmp_path / "이미지" / "1번", tmp_path / "장면"
+    real_collect = flow_maker.collect_images
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300")
+        flow = flow_maker.Flow(page)
+
+        def broken(*a, **k):
+            raise RuntimeError("컬렉션 실패")
+        monkeypatch.setattr(flow_maker, "collect_images", broken)
+        with pytest.raises(RuntimeError):
+            flow_maker.make_track(flow, track, folder, scenes, 15)
+        assert [p.name for p in scenes.iterdir()] == ["1.mp4"]       # 영상은 먼저 받아 둠
+        monkeypatch.setattr(flow_maker, "collect_images", real_collect)
+        flow_maker.make_track(flow, track, folder, scenes, 15)       # 다시 실행
+        requests = page.evaluate("window.requests")
+        browser.close()
+    assert [bool(r["attachment"]) for r in requests] == [False, True]   # 이미지·영상 요청은 처음 한 번씩뿐
+    assert len([p for p in folder.iterdir() if p.suffix == ".jpg"]) == 15
+    assert not (folder / flow_maker.STATE_NAME).exists()

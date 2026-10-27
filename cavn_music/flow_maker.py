@@ -18,6 +18,7 @@ md 파일의 트랙마다 (트랙 번호 N):
 """
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -69,6 +70,8 @@ TILES_JS = """(box) => {
         && r.top + r.height / 2 > a.y - padTop && r.top + r.height / 2 < a.y + a.height + pad;
     const inPrompt = r => box && (inside(r, box.prompt, 20, 60) || inside(r, box.panel, 0, 0));
     document.querySelectorAll('[data-cavn-tile]').forEach(e => e.removeAttribute('data-cavn-tile'));
+    // Flow 그림 주소 끝의 크기 표시(=w600-rw 등)는 칸 크기에 따라 바뀌므로 떼고 비교한다
+    const norm = u => (u || '').split('?')[0].replace(/=[\\w-]*$/, '');
     const side = [...document.querySelectorAll('*')].find(e =>
         (e.innerText || '').trim() === '전체 미디어' && e.getBoundingClientRect().width > 0);
     const sideRight = side ? side.getBoundingClientRect().right + 5 : 0;
@@ -111,8 +114,8 @@ TILES_JS = """(box) => {
             /play_circle|videocam|movie/.test(tile.innerText || '');
         const src = isVideo
             ? [m.currentSrc || m.src || '', m.poster || '', tile.querySelector('img') ? tile.querySelector('img').src : '']
-                .filter(Boolean).join('|')
-            : (m.currentSrc || m.src || '');
+                .filter(Boolean).map(norm).join('|')
+            : norm(m.currentSrc || m.src || '');
         add(tile, isVideo ? 'video' : 'image', (isVideo ? 'video:' : 'image:') + src);
     });
     out.sort((a, b) => Math.abs(a.y - b.y) > 20 ? a.y - b.y : a.x - b.x);
@@ -226,7 +229,48 @@ class Flow:
     def tile(self, key, refresh=False):
         if refresh:  # 화면이 다시 그려졌을 수 있으니 칸 표시를 새로 붙인다
             self.tiles()
-        return self.page.locator(f"[data-cavn-tile={_css_str(key)}]").first
+        loc = self.page.locator(f"[data-cavn-tile={_css_str(key)}]")
+        if loc.count():
+            return loc.first
+        if not refresh:
+            return loc.first
+        # 격자가 길면 화면 밖의 칸은 아예 그려지지 않음 → 격자를 위에서부터 내려 가며 찾는다
+        found = self.find_tile(key)
+        if found is None:
+            raise RuntimeError("Flow 화면에서 그 이미지·영상 칸을 찾지 못했습니다 (격자를 끝까지 내려 봐도 없음).")
+        return found
+
+    def _scroll_grid(self, to_top=False):
+        """가운데 격자를 한 화면만큼 내린다 (to_top 이면 맨 위로). 더 못 내려가면 False."""
+        return self.page.evaluate("""top => {
+            const cands = [...document.querySelectorAll('*')].filter(e => {
+                const s = getComputedStyle(e);
+                return /(auto|scroll)/.test(s.overflowY) && e.scrollHeight > e.clientHeight + 20
+                    && e.clientWidth > innerWidth * 0.4;
+            });
+            const el = cands.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0]
+                || document.scrollingElement;
+            if (top) { el.scrollTop = 0; return true; }
+            const before = el.scrollTop;
+            el.scrollTop = before + el.clientHeight * 0.8;
+            return el.scrollTop > before;
+        }""", to_top)
+
+    def find_tile(self, key, max_steps=40):
+        self._scroll_grid(to_top=True)
+        time.sleep(1)
+        for _ in range(max_steps):
+            self.tiles()
+            loc = self.page.locator(f"[data-cavn-tile={_css_str(key)}]")
+            if loc.count():
+                return loc.first
+            if not self._scroll_grid():
+                break
+            time.sleep(1)
+        return None
+
+    def has_tile(self, key):
+        return self.find_tile(key) is not None
 
     def _visible_boxes(self, loc):
         out = []
@@ -758,11 +802,43 @@ def collect_images(flow, images, folder):
 
 # ---------------------------------------------------------------- 트랙 하나
 
+STATE_NAME = ".flow기록.json"   # 이 트랙에서 Flow 에 만든 이미지·영상 (다시 실행할 때 또 만들지 않으려고)
+
+
+def load_state(folder):
+    try:
+        return json.loads((folder / STATE_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(folder, **values):
+    state = load_state(folder)
+    state.update(values)
+    try:
+        (folder / STATE_NAME).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False):
     folder.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
-    if reuse:
+    # 지난번에 이 트랙의 이미지·영상을 Flow 에 만들어 놓고 받기에서 실패했으면, 기록해 둔 그 칸을 찾아 다시 쓴다
+    state = load_state(folder)
+    saved_images = state.get("images") or []
+    if not reuse and len(saved_images) >= n_images and flow.has_tile(saved_images[-1]) and flow.has_tile(saved_images[0]):
+        log(f"  지난번에 Flow 에 만들어 둔 이 트랙 이미지 {len(saved_images)}장을 다시 씁니다 (새로 만들지 않음)")
+        images = [{"key": k} for k in saved_images[:n_images]]
+        reuse = "state"
+        if state.get("video") and flow.has_tile(state["video"]):
+            log("  지난번에 만들어 둔 이 트랙 영상도 다시 씁니다 (새로 만들지 않음)")
+            reuse_video = "state"
+
+    if reuse == "state":
+        pass
+    elif reuse:
         # 이 트랙 이미지가 이미 Flow 화면 맨 앞에 있음 → 새로 만들지 않고 그 이미지를 쓴다
         images = flow.tiles("image")[:n_images]
         if len(images) < n_images:
@@ -770,8 +846,15 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         log(f"  Flow 화면 맨 앞의 기존 이미지 {len(images)}장을 씁니다 (새로 만들지 않음)")
     else:
         images = request_images(flow, track.image_prompt, n_images)
+    save_state(folder, images=[img["key"] for img in images])
 
-    if reuse_video:
+    have_video = video_path(scene_dir, track.number) is not None
+    if have_video:
+        log(f"  영상은 이미 받아 두었습니다 (장면\\{video_path(scene_dir, track.number).name}) → 영상은 건너뜀")
+        video = None
+    elif reuse_video == "state":
+        video = {"key": state["video"]}
+    elif reuse_video:
         # 이 트랙 영상도 이미 만들어 둠 → 격자 맨 앞의 영상을 쓴다 (크레딧 안 씀)
         videos = flow.tiles("video")
         if not videos:
@@ -787,13 +870,21 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         flow.send_prompt(f"{video_prompt}\n\n{VIDEO_REQUEST}")
         video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
         log("  영상 완성")
+    if video:
+        save_state(folder, video=video["key"])
+        # 영상을 먼저 받는다 (이미지 컬렉션에서 실패해도 영상은 남도록 → 다시 실행할 때 영상을 또 만들지 않음)
+        download_video(flow, video, scene_dir, track.number)
 
     count = collect_images(flow, images, folder)
     if count < len(images):
-        log(f"    !! {len(images)}장 중 {count}장만 받았습니다. 다시 실행하면 이 트랙을 다시 합니다.")
+        log(f"    !! {len(images)}장 중 {count}장만 받았습니다. 다시 실행하면 기록해 둔 이미지로 이 트랙을 다시 받습니다.")
+    else:
+        (folder / STATE_NAME).unlink(missing_ok=True)   # 다 받았으니 기록은 지움
 
+
+def download_video(flow, video, scene_dir, number):
     log("  영상 다운로드")
-    video_name = str(track.number)
+    video_name = str(number)
     path = None
     try:
         # 컬렉션처럼 다운로드 폴더에 완성된 영상 파일이 생길 때까지 기다렸다가, 진짜 영상인지 확인하고 옮긴다
