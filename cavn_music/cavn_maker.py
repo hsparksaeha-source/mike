@@ -399,6 +399,16 @@ class Cavn:
         self.wait_list_loaded(wait=10)
         return True
 
+    def clear_search(self):
+        """끝나면 검색칸을 비워서 CAVN 목록에 앨범의 모든 곡이 다시 보이게 한다."""
+        boxes = self._visible(self.page.locator("input[placeholder*='검색'], input[type=search]"), "right")
+        try:
+            if boxes and boxes[0].input_value():
+                boxes[0].fill("")
+                boxes[0].press("Enter")
+        except PlaywrightError:
+            pass
+
     def song_rows(self, title):
         """오른쪽 목록에서 이 제목의 곡 줄들 (위에서부터).
         화면에 보이는 [더 보기]에서 출발해 제목이 들어 있는 가장 가까운 상자 = 곡 한 줄.
@@ -978,6 +988,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
         print()
         # 캡컷 조립 프로그램은 노래 파일을 날짜순으로 줄 세우므로, 나중에 받은 곡이 뒤로 가지 않게
         fix_song_order(out_dir, tracks)
+        cavn.clear_search()
         log(f"끝. 성공 {len(todo) - len(failed)}곡, 실패 {len(failed)}곡")
         for t in failed:
             print(f"  실패: {t.number}. {t.title}  (다시 실행하면 이 곡부터 이어서 합니다)")
