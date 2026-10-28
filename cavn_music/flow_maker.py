@@ -476,19 +476,30 @@ class Flow:
         """캐릭터 하나를 프롬프트 칸에 올린다."""
         sb = self._open_asset_picker()
         big = 10_000
-        left_col = (sb["x"] - 220, sb["x"] - 5, sb["y"] + sb["height"], big)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
-        below = (sb["x"] - 220, big, sb["y"] + sb["height"], big)               # 창 안쪽 (검색칸 아래)
+        left_col = (sb["x"] - 400, sb["x"] - 5, sb["y"] + sb["height"], big)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
+        below = (sb["x"] - 400, big, sb["y"] + sb["height"], big)               # 창 안쪽 (검색칸 아래)
         # 1) 왼쪽 '캐릭터'
         if not self._click_text_in("캐릭터", left_col):
             raise RuntimeError("애셋 고르기 창에서 '캐릭터'를 찾지 못했습니다.")
         # 2) 왼쪽 위 프로젝트 고르기 → '캐릭터목록'
         if not self._boxes(self.page.get_by_text(name, exact=True), (sb["x"] - 10, big, sb["y"], big)):
-            row = (sb["x"] - 220, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
+            row = (sb["x"] - 400, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
             drop = self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
             if not drop:
                 raise RuntimeError("애셋 고르기 창 왼쪽 위의 프로젝트 고르기 칸을 찾지 못했습니다.")
-            drop[0][0].click()
+            # 날짜(프로젝트 이름) 옆의 아래 화살표를 눌러야 프로젝트 목록이 펼쳐진다
+            drop.sort(key=lambda eb: eb[1]["x"])
+            el, box = drop[0]
+            arrow = self._boxes(self.page.get_by_text(re.compile(r"^\s*(arrow_drop_down|expand_more|keyboard_arrow_down|▾|▼)\s*$")),
+                                (box["x"], box["x"] + box["width"] + 10, box["y"] - 5, box["y"] + box["height"] + 5))
+            if arrow:
+                arrow[0][0].click()
+            else:
+                self.page.mouse.click(box["x"] + box["width"] - 12, box["y"] + box["height"] / 2)
             time.sleep(1)
+            if not self._boxes(self.page.get_by_text(project, exact=True), below):
+                el.click()   # 화살표로 안 열리면 칸 자체를 한 번 더
+                time.sleep(1)
             if not self._click_text_in(project, below):
                 self.page.keyboard.press("Escape")
                 raise RuntimeError(f"프로젝트 '{project}' 를 찾지 못했습니다. Flow 프로젝트 이름을 확인해 주세요.")

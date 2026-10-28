@@ -259,15 +259,15 @@ document.getElementById("addAsset").onclick = () => {
   const paint = () => {
     const names = kind === "캐릭터" ? (charProjects[project] || []).filter(n => n.includes(query)) : [];
     pk.innerHTML = `
-      <div style="position:absolute;left:10px;top:10px"><button class="proj">${project} <span>arrow_drop_down</span></button></div>
-      <div style="position:absolute;left:130px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:400px"></div>
+      <div style="position:absolute;left:10px;top:10px"><button class="proj">${project} <span class="arr">arrow_drop_down</span></button></div>
+      <div style="position:absolute;left:230px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:380px"></div>
       <div style="position:absolute;left:10px;top:60px" class="kinds">
         ${["전체", "이미지", "동영상", "음성", "캐릭터", "아바타", "업로드"].map(k => `<div class="k" style="padding:6px">${k}</div>`).join("")}</div>
-      <div style="position:absolute;left:130px;top:60px;width:200px" class="list">
+      <div style="position:absolute;left:230px;top:60px;width:200px" class="list">
         ${names.length ? names.map(n => `<div class="c" style="padding:8px"><img src="${svg(n.length)}" style="width:20px"> <span>${n}</span></div>`).join("")
                         : "<div>애셋이 없습니다.</div>"}</div>
-      ${chosen ? `<div style="position:absolute;left:350px;top:60px">${chosen} 미리보기<br><button class="addp">프롬프트에 추가</button></div>` : ""}`;
-    pk.querySelector(".proj").onclick = () => {
+      ${chosen ? `<div style="position:absolute;left:450px;top:60px">${chosen} 미리보기<br><button class="addp">프롬프트에 추가</button></div>` : ""}`;
+    pk.querySelector(".arr").onclick = () => {   // 실제처럼 날짜 옆 아래 화살표를 눌러야 프로젝트 목록이 펼쳐짐
       const m = document.createElement("div");
       m.style.cssText = "position:absolute;left:10px;top:40px;background:#333;z-index:21";
       m.innerHTML = ["10월 28 - 18:23", "캐릭터목록", "낭만 캐롤1집"].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
