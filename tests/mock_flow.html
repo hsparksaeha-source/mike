@@ -144,7 +144,7 @@ function draw() {
       t.querySelector(".redo").onclick = () => { window.gridRetry = (window.gridRetry || 0) + 1; };
     } else if (item.kind === "image") {
       t.draggable = true;
-      t.innerHTML = `<img src="${svg(item.id)}" draggable="false"><div class="label">image ${item.label}</div>`;
+      t.innerHTML = `<img src="${svg(item.id + (item.rev || 0) * 100000)}" draggable="false"><div class="label">image ${item.label}</div>`;
     } else {
       t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id)}"></video>` +
                     `<div class="label">play_circle ${item.label}</div>`;
@@ -234,6 +234,9 @@ function submit() {
         setTimeout(() => { items.unshift({id: nextId++, kind: i >= n - fail ? "failed" : "image", label: "Frozen lake"}); draw(); },
                    delay + i * 60);
       }
+      if (params.get("rekey") === "1")   // 다 만들고 조금 뒤 그림 주소가 바뀌는 경우
+        setTimeout(() => { items.forEach(it => { if (it.kind === "image") it.rev = (it.rev || 0) + 1; }); draw(); },
+                   delay + n * 60 + 12000);
     };
     if (params.get("retry") === "1" && !window.retryShown) {   // 처음 요청은 오류 → [다시 시도]를 눌러야 진행
       window.retryShown = true;
@@ -271,8 +274,11 @@ document.getElementById("addAsset").onclick = () => {
       ${chosen ? `<div style="position:absolute;left:450px;top:60px">${chosen} 미리보기<br><button class="addp">프롬프트에 추가</button></div>` : ""}`;
     pk.querySelector(".arr").onclick = () => {   // 실제처럼 날짜 옆 아래 화살표를 눌러야 프로젝트 목록이 펼쳐짐
       const m = document.createElement("div");
-      m.style.cssText = "position:absolute;left:10px;top:40px;background:#333;z-index:21";
-      m.innerHTML = ["10월 28 - 18:23", "캐릭터목록", "낭만 캐롤1집"].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
+      m.style.cssText = "position:absolute;left:10px;top:40px;background:#333;z-index:21;max-height:220px;overflow:auto";
+      // 프로젝트가 많으면 '캐릭터목록' 이 목록 아래쪽에 있어서 내려야 보임
+      const many = params.get("manyprojects") === "1"
+        ? [...Array(30).keys()].map(i => `10월 ${i + 1} - 0${i % 10}:00`) : ["10월 28 - 18:23"];
+      m.innerHTML = [...many, "캐릭터목록", "낭만 캐롤1집"].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
       m.querySelectorAll(".p").forEach(d => d.onclick = () => { project = d.textContent; chosen = null; paint(); });
       pk.appendChild(m);
     };
@@ -296,7 +302,10 @@ document.getElementById("addAsset").onclick = () => {
       pk.remove();
     };
   };
-  paint();
+  if (params.get("slowpicker") === "1") {   // 창이 열리고 왼쪽 위 프로젝트 칸이 늦게 그려지는 경우
+    pk.innerHTML = `<div style="position:absolute;left:230px;top:10px"><input class="q" placeholder="애셋 검색"></div>`;
+    setTimeout(paint, 2500);
+  } else paint();
   document.body.appendChild(pk);
 };
 

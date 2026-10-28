@@ -239,3 +239,31 @@ def test_video_refused_keeps_images(tmp_path, monkeypatch):
     assert len(list(folder.glob("*.jpg"))) == 15
     assert not scenes.exists() or not list(scenes.iterdir())
     assert flow_maker.track_done(folder, scenes, 1, 15)
+
+
+def test_add_character_slow_picker_and_many_projects():
+    """애셋 창의 프로젝트 칸이 늦게 그려지고, 프로젝트가 많아 '캐릭터목록' 이 아래쪽에 있어도 찾는다."""
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        page = browser.new_context(viewport={"width": 1700, "height": 1000}).new_page()
+        page.goto(f"{MOCK}?delay=300&slowpicker=1&manyprojects=1")
+        flow = flow_maker.Flow(page)
+        flow.add_character("마태오", "캐릭터목록")
+        chars = page.evaluate("window.attachedChars")
+        browser.close()
+    assert chars == ["마태오"]
+
+
+def test_image_urls_change_after_generation(tmp_path, monkeypatch):
+    """다 만든 직후 Flow 가 그림 주소를 바꿔도 이미지를 찾아 컬렉션에 넣는다 (썸네일 배경 싱글1·2 실패 문제)."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&rekey=1")
+        flow = flow_maker.Flow(page)
+        images = flow_maker.request_images(flow, "photorealistic test", 4)
+        count = flow_maker.collect_images(flow, images, tmp_path / "배경")
+        browser.close()
+    assert count == 4

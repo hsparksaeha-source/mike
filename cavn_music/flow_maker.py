@@ -529,7 +529,19 @@ class Flow:
         return bool(self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I))))
 
     def add_character(self, name, project):
-        """캐릭터 하나를 프롬프트 칸에 올린다."""
+        """캐릭터 하나를 프롬프트 칸에 올린다. 안 되면 창을 닫고 한 번 더 해 본다."""
+        for attempt in (1, 2):
+            try:
+                return self._add_character_once(name, project)
+            except (RuntimeError, PlaywrightError) as e:
+                if attempt == 2:
+                    raise
+                log(f"    (캐릭터 올리기 다시 시도: {str(e).splitlines()[0]})")
+                for _ in range(2):
+                    self.page.keyboard.press("Escape")
+                    time.sleep(1)
+
+    def _add_character_once(self, name, project):
         attached_before = self._prompt_attach_count()
         sb = self._open_asset_picker()
         big = 10_000
@@ -541,7 +553,12 @@ class Flow:
         # 2) 왼쪽 위 프로젝트 고르기 → '캐릭터목록'
         if not self._boxes(self.page.get_by_text(name, exact=True), (sb["x"] - 10, big, sb["y"], big)):
             row = (sb["x"] - 400, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
-            drop = self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
+            drop = []
+            for _ in range(8):   # 창이 막 열렸을 때는 왼쪽 위 칸이 늦게 그려질 수 있음
+                drop = self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
+                if drop:
+                    break
+                time.sleep(1)
             if not drop:
                 raise RuntimeError("애셋 고르기 창 왼쪽 위의 프로젝트 고르기 칸을 찾지 못했습니다.")
             # 날짜(프로젝트 이름) 옆의 아래 화살표를 눌러야 프로젝트 목록이 펼쳐진다
@@ -557,7 +574,16 @@ class Flow:
             if not self._boxes(self.page.get_by_text(project, exact=True), below):
                 el.click()   # 화살표로 안 열리면 칸 자체를 한 번 더
                 time.sleep(1)
-            if not self._click_text_in(project, below):
+            # 프로젝트가 많아지면 '캐릭터목록' 이 목록 아래쪽에 있음 → 목록을 내려 가며 찾는다
+            found = False
+            for _ in range(15):
+                if self._click_text_in(project, below):
+                    found = True
+                    break
+                self.page.mouse.move(box["x"] + 80, box["y"] + box["height"] + 120)
+                self.page.mouse.wheel(0, 300)
+                time.sleep(0.7)
+            if not found:
                 self.page.keyboard.press("Escape")
                 raise RuntimeError(f"프로젝트 '{project}' 를 찾지 못했습니다. Flow 프로젝트 이름을 확인해 주세요.")
         # 3) 이름 찾기: 검색칸에 이름을 넣고, 그래도 안 보이면 목록을 내려 가며
@@ -1010,6 +1036,11 @@ def request_images(flow, prompt, n_images, request=IMAGE_REQUEST, characters=(),
     flow.send_prompt(f"{prompt}\n\n{request.format(n=n_images)}")
     images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)
     images = images[:n_images] if len(images) > n_images else images
+    # 다 만들어진 직후 Flow 가 그림 주소를 한 번 더 바꿀 때가 있어서, 잠시 뒤 다시 읽는다
+    time.sleep(5)
+    again = [t for t in flow.tiles("image") if t["key"] not in before]
+    if len(again) >= len(images):
+        images = again[:len(images)]
     log(f"  이미지 {len(images)}장 완성")
     return images
 
@@ -1020,7 +1051,17 @@ def collect_images(flow, images, folder):
     log("  새 컬렉션 만들고 이미지 넣기")
     flow.new_collection()
     for i, img in enumerate(images, 1):
-        source = flow.tile(img["key"], refresh=True)
+        try:
+            source = flow.tile(img["key"], refresh=True)
+        except RuntimeError:
+            # 그림 주소가 바뀌어 못 찾으면: 방금 만든 이미지는 격자 맨 앞에 있으므로 같은 순번의 이미지를 쓴다
+            flow._scroll_grid(to_top=True)
+            time.sleep(1)
+            newest = flow.tiles("image")
+            if i - 1 >= len(newest):
+                raise
+            log(f"    ({i}번째 이미지를 주소로 못 찾아서 격자 순서로 찾습니다)")
+            source = flow.tile(newest[i - 1]["key"], refresh=True)
         flow.drag(source, flow.tile(flow.first_collection()))
         if i % 5 == 0:
             log(f"    {i}/{len(images)}장 넣음")
