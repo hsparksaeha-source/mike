@@ -41,6 +41,7 @@ class Track:
     classical: bool = False  # True면 연주곡 (가사 칸 = 구조 태그)
     image_prompt: str = ""   # Flow 이미지 프롬프트
     video_prompt: str = ""   # Flow 영상 프롬프트 (없으면 뮤직 비디오 콘셉트)
+    cast: str = ""           # 가요·칸쏘네 이미지 주인공 캐릭터 ('## 주인공 캐릭터' 칸, 없으면 빈칸)
     warnings: list = field(default_factory=list)
 
     def style_box(self, include_genre=True):
@@ -87,6 +88,8 @@ def _section_key(heading):
         return "video"
     if name.startswith("뮤직 비디오"):
         return "video_concept"
+    if name.startswith("주인공"):
+        return "cast"
     return None
 
 
@@ -143,6 +146,7 @@ def parse_md(text):
             classical=classical,
             image_prompt=_one_line(values.get("image", "")),
             video_prompt=_one_line(values.get("video") or values.get("video_concept", "")),
+            cast=_one_line(values.get("cast", "")),
         )
         if not track.style:
             track.warnings.append("스타일 칸이 비어 있음")

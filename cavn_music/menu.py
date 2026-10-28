@@ -13,7 +13,7 @@ from md_parser import ask_md_path, ask_only  # noqa: E402
 def main():
     md = ask_md_path(sys.argv[1] if len(sys.argv) > 1 else None)
     print("\n  1 = 음악 만들기 (CAVN AI)")
-    print("  2 = 이미지 15장 + 영상 만들기 (Google Flow, 경음악·클래식만)")
+    print("  2 = 이미지 15장 + 영상 만들기 (Google Flow)")
     print("  3 = 둘 다 (음악 먼저, 이어서 이미지)")
     print("  4 = 유튜브 썸네일 만들기 (Flow 배경 + 캡컷 초안)")
     choice = ""

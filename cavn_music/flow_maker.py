@@ -1,4 +1,5 @@
-"""Google Flow 자동 이미지 15장 + 영상 1개 만들기 (경음악·클래식용)
+"""Google Flow 자동 이미지 15장 + 영상 1개 만들기
+(경음악·클래식: 이미지 프롬프트로 / 가요·칸쏘네: 주인공 캐릭터 + 곡 제목 + 가사로)
 
 md 파일의 트랙마다 (트랙 번호 N):
   1. 에이전트 프롬프트 칸에 '이미지 프롬프트' + "이미지 15장 만들어 줘" → 15장 완성 기다림
@@ -50,6 +51,9 @@ VIDEO_TIMEOUT_SEC = 20 * 60
 DOWNLOAD_TIMEOUT_MS = 5 * 60_000
 IMAGE_REQUEST = "위 프롬프트로 16:9 이미지 {n}장을 만들어 줘."
 VIDEO_REQUEST = "이 이미지로 영상을 만들어 줘."
+# 가요·칸쏘네 (이미지 프롬프트 대신 곡 제목 + 가사, 주인공 캐릭터)
+LYRIC_IMAGE_REQUEST = "캐릭터({names})를 주인공으로 가사에 맞게 16:9 이미지 {{n}}장을 만들어 주세요."
+LYRIC_VIDEO_REQUEST = "이 이미지로 가사에 맞게 영상을 만들어 주세요."
 PROMPT_PLACEHOLDER = "무엇을 만들고 싶으신가요?"
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 VIDEO_EXTS = (".mp4", ".mov", ".webm")
@@ -425,6 +429,94 @@ class Flow:
         except PlaywrightError:
             pass
         return False
+
+    # -- 캐릭터 ([+] → 캐릭터 → 프로젝트 '캐릭터목록' → 이름 → [프롬프트에 추가])
+    def _boxes(self, loc, region=None):
+        """보이는 것들 중 region(x0, x1, y0, y1) 안에 가운데가 있는 것 [(요소, 상자)]."""
+        out = []
+        for el, box in self._visible_boxes(loc):
+            cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            if region and not (region[0] <= cx <= region[1] and region[2] <= cy <= region[3]):
+                continue
+            out.append((el, box))
+        return out
+
+    def _open_asset_picker(self):
+        """프롬프트 칸 아래쪽의 [+] 를 눌러 애셋 고르기 창을 연다. 창의 검색칸 상자를 돌려준다."""
+        search = self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I))
+        found = self._boxes(search)
+        if found:
+            return found[0][1]
+        pb = self.prompt_box().bounding_box()
+        # 화면 맨 아래 프롬프트 칸 옆(왼쪽 아래)의 [+] (맨 위 [+] 가 아님 → 프롬프트 칸 근처만 본다)
+        plus = self._boxes(self.page.get_by_role("button", name=re.compile(r"^\s*(add|\+)\s*$|추가|add media|add asset", re.I)),
+                           (pb["x"] - 80, pb["x"] + pb["width"] + 40, pb["y"] - 20, pb["y"] + pb["height"] + 120))
+        if not plus:
+            raise RuntimeError("프롬프트 칸의 [+] 버튼을 찾지 못했습니다.")
+        plus.sort(key=lambda eb: (eb[1]["x"], -eb[1]["y"]))   # 프롬프트 칸 왼쪽 아래의 [+]
+        plus[0][0].click()
+        for _ in range(20):
+            time.sleep(0.5)
+            found = self._boxes(search)
+            if found:
+                return found[0][1]
+        raise RuntimeError("[+] 를 눌러도 애셋 고르기 창이 열리지 않았습니다.")
+
+    def _click_text_in(self, text, region, exact=True):
+        loc = self.page.get_by_text(text, exact=exact) if exact else self.page.get_by_text(text)
+        found = self._boxes(loc, region)
+        if not found:
+            return False
+        found.sort(key=lambda eb: (eb[1]["y"], eb[1]["x"]))
+        found[0][0].click()
+        time.sleep(1)
+        return True
+
+    def add_character(self, name, project):
+        """캐릭터 하나를 프롬프트 칸에 올린다."""
+        sb = self._open_asset_picker()
+        big = 10_000
+        left_col = (sb["x"] - 220, sb["x"] - 5, sb["y"] + sb["height"], big)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
+        below = (sb["x"] - 220, big, sb["y"] + sb["height"], big)               # 창 안쪽 (검색칸 아래)
+        # 1) 왼쪽 '캐릭터'
+        if not self._click_text_in("캐릭터", left_col):
+            raise RuntimeError("애셋 고르기 창에서 '캐릭터'를 찾지 못했습니다.")
+        # 2) 왼쪽 위 프로젝트 고르기 → '캐릭터목록'
+        if not self._boxes(self.page.get_by_text(name, exact=True), (sb["x"] - 10, big, sb["y"], big)):
+            row = (sb["x"] - 220, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
+            drop = self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
+            if not drop:
+                raise RuntimeError("애셋 고르기 창 왼쪽 위의 프로젝트 고르기 칸을 찾지 못했습니다.")
+            drop[0][0].click()
+            time.sleep(1)
+            if not self._click_text_in(project, below):
+                self.page.keyboard.press("Escape")
+                raise RuntimeError(f"프로젝트 '{project}' 를 찾지 못했습니다. Flow 프로젝트 이름을 확인해 주세요.")
+        # 3) 이름 찾기: 검색칸에 이름을 넣고, 그래도 안 보이면 목록을 내려 가며
+        search = self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I)))
+        if search:
+            search[0][0].fill(name)
+            time.sleep(1.5)
+        list_area = (sb["x"] - 10, sb["x"] + sb["width"] * 0.6, sb["y"] + sb["height"], big)
+        for _ in range(15):
+            if self._click_text_in(name, list_area):
+                break
+            self.page.mouse.move(sb["x"] + 80, sb["y"] + 150)
+            self.page.mouse.wheel(0, 400)
+            time.sleep(0.8)
+        else:
+            self.page.keyboard.press("Escape")
+            raise RuntimeError(f"캐릭터 '{name}' 을(를) 찾지 못했습니다. 캐릭터목록 프로젝트의 이름을 확인해 주세요.")
+        # 4) [프롬프트에 추가]
+        add = self._boxes(self.page.get_by_role("button", name=re.compile("프롬프트에 추가|Add to prompt", re.I)))
+        if not add:
+            add = self._boxes(self.page.get_by_text(re.compile(r"^\s*프롬프트에 추가\s*$")))
+        if not add:
+            self.page.keyboard.press("Escape")
+            raise RuntimeError("[프롬프트에 추가] 버튼을 찾지 못했습니다.")
+        add[0][0].click()
+        time.sleep(1.5)
+        log(f"    캐릭터 '{name}' 를 프롬프트에 올림")
 
     def drag(self, source, target):
         page = self.page
@@ -821,11 +913,14 @@ def track_done(image_folder, scene_dir, number, n_images):
 
 # ---------------------------------------------------------------- 이미지 만들기·받기 (썸네일 프로그램도 씀)
 
-def request_images(flow, prompt, n_images):
-    """에이전트에 프롬프트 + 'N장 만들어 줘'를 보내고 새 이미지 N장이 생길 때까지 기다린다."""
+def request_images(flow, prompt, n_images, request=IMAGE_REQUEST, characters=(), project=None):
+    """에이전트에 프롬프트 + 'N장 만들어 줘'를 보내고 새 이미지 N장이 생길 때까지 기다린다.
+    characters 가 있으면 먼저 [+] 로 그 캐릭터들을 프롬프트 칸에 올린다."""
     before = {t["key"] for t in flow.tiles()}
+    for name in characters:
+        flow.add_character(name, project)
     log(f"  이미지 {n_images}장 요청")
-    flow.send_prompt(f"{prompt}\n\n{IMAGE_REQUEST.format(n=n_images)}")
+    flow.send_prompt(f"{prompt}\n\n{request.format(n=n_images)}")
     images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)
     images = images[:n_images] if len(images) > n_images else images
     log(f"  이미지 {len(images)}장 완성")
@@ -876,7 +971,12 @@ def save_state(folder, **values):
         pass
 
 
-def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False):
+def lyric_prompt(track):
+    return f"{track.title}\n\n{track.lyrics}".strip()
+
+
+def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False, cast=None, project=None):
+    """cast(캐릭터 이름 목록)가 있으면 가요·칸쏘네 방식: 캐릭터 + 곡 제목 + 가사로 이미지, 가사에 맞게 영상."""
     folder.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
@@ -899,6 +999,11 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         if len(images) < n_images:
             raise RuntimeError(f"Flow 화면에 이미지가 {len(images)}장뿐이라 기존 이미지를 쓸 수 없습니다.")
         log(f"  Flow 화면 맨 앞의 기존 이미지 {len(images)}장을 씁니다 (새로 만들지 않음)")
+    elif cast:
+        from cast import join_names
+        images = request_images(flow, lyric_prompt(track), n_images,
+                                request=LYRIC_IMAGE_REQUEST.format(names=join_names(cast)),
+                                characters=cast, project=project)
     else:
         images = request_images(flow, track.image_prompt, n_images)
     save_state(folder, images=[img["key"] for img in images])
@@ -918,11 +1023,14 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         log("  Flow 화면 맨 앞의 기존 영상을 씁니다 (새로 만들지 않음)")
     else:
         first_made = images[-1]   # 새 이미지는 앞에 생기므로 맨 끝이 제일 처음 만든 것
-        video_prompt = track.video_prompt or track.image_prompt
+        if cast:
+            video_text = f"{lyric_prompt(track)}\n\n{LYRIC_VIDEO_REQUEST}"
+        else:
+            video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
         log("  맨 끝 이미지를 프롬프트 칸에 끌어다 놓고 영상 요청")
         before_video = {t["key"] for t in flow.tiles()}
         flow.drag(flow.tile(first_made["key"], refresh=True), flow.prompt_box())
-        flow.send_prompt(f"{video_prompt}\n\n{VIDEO_REQUEST}")
+        flow.send_prompt(video_text)
         video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
         log("  영상 완성")
     if video:
@@ -994,7 +1102,10 @@ def connect(pw):
     return page
 
 
-def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_images=IMAGES_PER_TRACK):
+def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_images=IMAGES_PER_TRACK,
+        cast_group=None, cast=None):
+    """cast_group: 가요·칸쏘네 md 에 쓸 캐릭터목록 묶음 이름 (안 주면 물어봄).
+    cast: {트랙 번호: [이름…]} (안 주면 confirm 일 때 곡마다 묻고, 아니면 기본값)"""
     md_path = Path(md_path)
     tracks = [t for t in parse_md_file(md_path) if not only or t.number in only]
     album_dir = Path(out_root) / safe_filename(md_path.stem)
@@ -1004,20 +1115,37 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
     todo = []
     for t in tracks:
         folder = image_folder(out_dir, t.number)
-        if not t.image_prompt:
-            mark = "!! 이미지 프롬프트 없음(건너뜀)"
+        if not t.image_prompt and not t.lyrics:
+            mark = "!! 이미지 프롬프트·가사 없음(건너뜀)"
         elif track_done(folder, scene_dir, t.number, n_images):
             mark = "완료(건너뜀)"
         else:
             mark = ""
             todo.append(t)
         print(f"  {t.number:>2}. {t.title}  {mark}")
-    if not any(t.image_prompt for t in tracks):
-        print("이 md 파일에는 이미지 프롬프트가 없습니다. 이미지·영상 작업은 경음악·클래식 md 에서만 합니다.")
+    if not any(t.image_prompt or t.lyrics for t in tracks):
+        print("이 md 파일에는 이미지 프롬프트도 가사도 없습니다.")
         return
     print(f"\n만들 트랙 {len(todo)}개 (트랙마다 이미지 {n_images}장 + 영상 1개)")
     if dry_run or not todo:
         return
+    # 가요·칸쏘네 (이미지 프롬프트 없이 가사만 있는 곡): 주인공 캐릭터를 정한다
+    project, cast_map = None, dict(cast or {})
+    lyric_todo = [t for t in todo if not t.image_prompt]
+    if lyric_todo:
+        from cast import ask_cast, ask_group, default_names, load_cast
+        project, groups = load_cast()
+        if not groups:
+            print("!! 캐릭터목록.txt 가 없거나 비어 있어서 가요·칸쏘네 곡은 건너뜁니다.")
+            todo = [t for t in todo if t.image_prompt]
+        else:
+            group = cast_group if cast_group in groups else (ask_group(groups) if confirm else next(iter(groups)))
+            print(f"캐릭터 묶음: {group}  (Flow 프로젝트 '{project}')")
+            missing = [t for t in lyric_todo if t.number not in cast_map]
+            if confirm:
+                cast_map.update(ask_cast(missing, groups[group]))
+            else:
+                cast_map.update({t.number: default_names(t, groups[group]) for t in missing})
     if confirm and input("시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
         return
     reuse_first = reuse_video_first = False
@@ -1035,8 +1163,12 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         for i, t in enumerate(todo, 1):
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
+                names = cast_map.get(t.number) if not t.image_prompt else None
+                if names:
+                    log(f"  주인공: {', '.join(names)}")
                 make_track(flow, t, image_folder(out_dir, t.number), scene_dir, n_images,
-                           reuse=reuse_first and i == 1, reuse_video=reuse_video_first and i == 1)
+                           reuse=reuse_first and i == 1, reuse_video=reuse_video_first and i == 1,
+                           cast=names, project=project)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)

@@ -2,7 +2,7 @@
 
 - 질문은 처음에 한 번에 다 묻고, 그다음에는 사람 손 없이 끝까지 간다 (나중에 예약 실행하기 쉽게).
 - 노래(CAVN)      : 모든 md
-- 이미지·영상(Flow): 연주곡 md (경음악·클래식)만. 가요·칸쏘네·미사곡처럼 가사가 있는 md 는 건너뜀
+- 이미지·영상(Flow): 경음악·클래식(이미지 프롬프트), 가요·칸쏘네(주인공 캐릭터 + 가사). 미사곡은 건너뜀
 - 썸네일          : md 에 썸네일 문구가 있으면
 - 한 단계가 실패해도 다음 단계·다음 md 로 넘어가고, 마지막에 실패한 것만 모아서 알려 준다.
   다시 실행하면 끝난 곡·트랙·썸네일은 건너뛰고 남은 것만 한다.
@@ -67,7 +67,12 @@ class Plan:
         self.md = md
         self.tracks = parse_md_file(md)
         self.instrumental = bool(self.tracks) and all(t.classical for t in self.tracks)
-        self.images = self.instrumental and any(t.image_prompt for t in self.tracks)
+        # 이미지·영상: 경음악·클래식은 이미지 프롬프트로, 가요·칸쏘네는 주인공 캐릭터 + 가사로
+        # (미사곡처럼 가사도 있고 곡마다 이미지 프롬프트도 있는 md 는 하지 않음)
+        self.lyric_images = (not self.instrumental and not any(t.image_prompt for t in self.tracks)
+                             and any(t.lyrics for t in self.tracks))
+        self.images = (self.instrumental and any(t.image_prompt for t in self.tracks)) or self.lyric_images
+        self.cast_group = None
         self.thumbs = thumb_maker.parse_thumbnails(md.read_text(encoding="utf-8-sig"))
         self.master = 0
 
@@ -114,6 +119,7 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--master", type=int, choices=[0, 1], help="모든 md 의 마스터링 0=안 함, 1=함 (안 주면 md 마다 물어봄)")
     ap.add_argument("--yes", action="store_true", help="'시작할까요?' 를 묻지 않고 바로 시작")
+    ap.add_argument("--cast", help="가요·칸쏘네 md 의 캐릭터 묶음 이름 (캐릭터목록.txt 의 [묶음], 안 주면 물어봄)")
     args = ap.parse_args()
 
     files = ask_md_files(args.md)
@@ -134,9 +140,19 @@ def main():
         print(f"\n{i}. {md.name}")
         print(f"  종류: {plan.kind}, {len(plan.tracks)}곡")
         print(f"  할 일: {' → '.join(steps)}")
-        if not plan.instrumental:
-            print("  (가사 있는 곡이라 이미지·영상은 하지 않습니다)")
+        if not plan.instrumental and not plan.images:
+            print("  (곡마다 이미지 프롬프트가 있는 가사 곡(미사곡 등)이라 이미지·영상은 하지 않습니다)")
         plan.master = args.master if args.master is not None else ask_master(plan)
+        if plan.lyric_images:
+            # 가요·칸쏘네: 캐릭터 묶음을 지금 고른다 (곡마다 주인공은 md 의 '주인공 캐릭터' 칸 또는 남·여 가수 표시로)
+            from cast import ask_group, load_cast
+            _, groups = load_cast()
+            if groups:
+                plan.cast_group = args.cast if args.cast in groups else ask_group(groups)
+                print(f"  캐릭터 묶음: {plan.cast_group}")
+            else:
+                print("  !! 캐릭터목록.txt 가 없어서 이미지·영상은 하지 않습니다")
+                plan.images = False
         plans.append(plan)
     if not plans:
         return
@@ -165,7 +181,7 @@ def main():
             print(f"\n################ [{k}/{len(plans)}] {md.name}  ({now()}) ################")
             run_step("노래", lambda: cavn_maker.run(md, args.out, confirm=False, master=plan.master, ask_album=False), failed, md)
             if plan.images:
-                run_step("이미지·영상", lambda: flow_maker.run(md, args.out, confirm=False), failed, md)
+                run_step("이미지·영상", lambda: flow_maker.run(md, args.out, confirm=False, cast_group=plan.cast_group), failed, md)
             if plan.thumbs:
                 run_step("썸네일", lambda: thumb_maker.run(md, args.out, confirm=False), failed, md)
         finally:

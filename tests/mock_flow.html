@@ -24,7 +24,7 @@
 <body>
 <div id="side">
   <div>바하2</div>
-  <div>전체 미디어</div><div>이미지</div><div>동영상</div>
+  <div>전체 미디어</div><div>캐릭터</div><div>이미지</div><div>동영상</div>
   <div><span>라이브러리</span> <button id="libPlus"><svg width="12" height="12"></svg></button></div>
   <div id="lib"></div>
 </div>
@@ -36,7 +36,7 @@
 <div id="promptWrap">
   <div id="attach"></div>
   <div id="promptHost"></div>
-  <button>add</button> <button id="agent">에이전트</button> <button id="send">arrow_forward</button>
+  <button id="addAsset">add</button> <button id="agent">에이전트</button> <button id="send">arrow_forward</button>
 </div>
 
 <script>
@@ -194,7 +194,8 @@ function submit() {
   const text = prompt.innerText.trim();
   if (!text) return;
   const chat = panel();
-  window.requests.push({text, attachment: attachment && attachment.id});
+  window.requests.push({text, attachment: attachment && attachment.id, chars: window.attachedChars});
+  window.attachedChars = [];
   const fresh = prompt.cloneNode(false);   // 실제 Flow 처럼 보낸 뒤 입력칸을 새로 그림
   fresh.addEventListener("keydown", onKey);
   prompt.replaceWith(fresh);
@@ -244,6 +245,49 @@ function submit() {
 function onKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }
 prompt.addEventListener("keydown", onKey);
 document.getElementById("send").onclick = submit;
+
+// 프롬프트 칸의 [+]: 애셋 고르기 창 (실제 Flow 처럼: 왼쪽 위 프로젝트 고르기, 애셋 검색, 왼쪽 종류, 오른쪽 미리보기)
+const charProjects = {"캐릭터목록": ["마태오", "쥴리", "브루노", "안나", "서준", "소라", "정우", "순자"],
+                      "낭만 캐롤1집": []};
+window.attachedChars = [];
+document.getElementById("addAsset").onclick = () => {
+  if (document.getElementById("picker")) return;
+  const pk = document.createElement("div");
+  pk.id = "picker";
+  pk.style.cssText = "position:fixed;right:10px;bottom:100px;width:690px;height:520px;background:#222;z-index:20";
+  let project = "10월 28 - 18:23", kind = "전체", query = "", chosen = null;
+  const paint = () => {
+    const names = kind === "캐릭터" ? (charProjects[project] || []).filter(n => n.includes(query)) : [];
+    pk.innerHTML = `
+      <div style="position:absolute;left:10px;top:10px"><button class="proj">${project} <span>arrow_drop_down</span></button></div>
+      <div style="position:absolute;left:130px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:400px"></div>
+      <div style="position:absolute;left:10px;top:60px" class="kinds">
+        ${["전체", "이미지", "동영상", "음성", "캐릭터", "아바타", "업로드"].map(k => `<div class="k" style="padding:6px">${k}</div>`).join("")}</div>
+      <div style="position:absolute;left:130px;top:60px;width:200px" class="list">
+        ${names.length ? names.map(n => `<div class="c" style="padding:8px"><img src="${svg(n.length)}" style="width:20px"> <span>${n}</span></div>`).join("")
+                        : "<div>애셋이 없습니다.</div>"}</div>
+      ${chosen ? `<div style="position:absolute;left:350px;top:60px">${chosen} 미리보기<br><button class="addp">프롬프트에 추가</button></div>` : ""}`;
+    pk.querySelector(".proj").onclick = () => {
+      const m = document.createElement("div");
+      m.style.cssText = "position:absolute;left:10px;top:40px;background:#333;z-index:21";
+      m.innerHTML = ["10월 28 - 18:23", "캐릭터목록", "낭만 캐롤1집"].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
+      m.querySelectorAll(".p").forEach(d => d.onclick = () => { project = d.textContent; chosen = null; paint(); });
+      pk.appendChild(m);
+    };
+    pk.querySelectorAll(".k").forEach(d => d.onclick = () => { kind = d.textContent; paint(); });
+    const q = pk.querySelector(".q");
+    q.oninput = () => { query = q.value; setTimeout(() => { paint(); const nq = pk.querySelector(".q"); nq.focus(); }, 200); };
+    pk.querySelectorAll(".c").forEach(d => d.onclick = () => { chosen = d.querySelector("span").textContent; paint(); });
+    const add = pk.querySelector(".addp");
+    if (add) add.onclick = () => {
+      window.attachedChars.push(chosen);
+      document.getElementById("attach").insertAdjacentHTML("beforeend", `<img src="${svg(chosen.length)}" style="width:20px">`);
+      pk.remove();
+    };
+  };
+  paint();
+  document.body.appendChild(pk);
+};
 
 document.getElementById("libPlus").onclick = () => {   // 라이브러리 [+]: 바로 새 컬렉션
   items.unshift({id: nextId++, kind: "collection", members: []}); draw();

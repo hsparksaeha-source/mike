@@ -445,3 +445,17 @@ def test_long_album_list_uses_search(tmp_path):
     assert [c["title"] for c in first["created"]] == ["You Were Already There", "Un'Estate Soltanto"]
     assert second["created"] == first["created"]          # 두 번째 실행: 새로 만들지 않고 목록에서 찾아 받음
     assert (songs / "Un'Estate Soltanto.wav").exists() and (songs / "Un'Estate Soltanto (1).wav").exists()
+
+
+def test_cast_helpers():
+    import cast
+    project, groups = cast.load_cast()
+    assert project == "캐릭터목록" and groups["칸쏘네"] == {"여": ["쥴리", "안나"], "남": ["마태오", "브루노"]}
+    g = groups["칸쏘네"]
+    assert cast.parse_names("둘", g) == ["쥴리", "마태오"]
+    assert cast.parse_names("안나와 브루노", g) == ["안나", "브루노"]
+    assert cast.parse_names("쥴리 마태오", g) == ["쥴리", "마태오"]
+    assert cast.join_names(["서준", "소라"]) == "서준과 소라" and cast.join_names(["쥴리", "마태오"]) == "쥴리와 마태오"
+    import pytest
+    with pytest.raises(ValueError):
+        cast.parse_names("수지", g)

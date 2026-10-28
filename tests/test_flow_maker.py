@@ -174,3 +174,32 @@ def test_retry_button_and_failed_images(tmp_path, monkeypatch):
     assert clicked == [1, 0]          # 대화 창의 [다시 시도]만 한 번 누름 (실패 칸의 아이콘은 안 누름)
     assert len([p for p in folder.iterdir() if p.suffix == ".jpg"]) == 11
     assert flow_maker.track_done(folder, scenes, 1, 15)
+
+
+def test_pop_tracks_with_characters(tmp_path, monkeypatch):
+    """가요·칸쏘네: [+] → 캐릭터 → '캐릭터목록' 프로젝트 → 이름 → [프롬프트에 추가] 로 주인공을 올리고,
+    곡 제목 + 가사 + '캐릭터(…)를 주인공으로 가사에 맞게 이미지 15장' 을 보낸다. 영상도 가사에 맞게."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    from test_cavn_maker import POP_MD
+    md = tmp_path / "칸쏘네1집.md"
+    md.write_text(POP_MD, encoding="utf-8")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300")
+        # 1번은 기본값(남자 노래 → 첫 남자 '마태오'), 2번은 직접 고른 두 사람
+        flow_maker.run(md, tmp_path / "out", page=page, confirm=False, n_images=15,
+                       cast_group="칸쏘네", cast={2: ["안나", "브루노"]})
+        requests = page.evaluate("window.requests")
+        browser.close()
+    images = [r for r in requests if not r["attachment"]]
+    videos = [r for r in requests if r["attachment"]]
+    assert [r["chars"] for r in images] == [["마태오"], ["안나", "브루노"]]
+    assert images[0]["text"].startswith("You Were Already There\n\n")
+    assert "캐릭터(마태오)를 주인공으로 가사에 맞게 16:9 이미지 15장" in images[0]["text"]
+    assert "캐릭터(안나와 브루노)를 주인공으로" in images[1]["text"]
+    assert all(v["text"].endswith("이 이미지로 가사에 맞게 영상을 만들어 주세요.") for v in videos) and len(videos) == 2
+    album = tmp_path / "out" / "칸쏘네1집"
+    assert len(list((album / "이미지" / "2번").glob("*.jpg"))) == 15
+    assert sorted(p.name for p in (album / "장면").iterdir()) == ["1.mp4", "2.mp4"]
