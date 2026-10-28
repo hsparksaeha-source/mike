@@ -180,7 +180,10 @@ def test_pop_tracks_with_characters(tmp_path, monkeypatch):
     """가요·칸쏘네: [+] → 캐릭터 → '캐릭터목록' 프로젝트 → 이름 → [프롬프트에 추가] 로 주인공을 올리고,
     곡 제목 + 가사 + '캐릭터(…)를 주인공으로 가사에 맞게 이미지 15장' 을 보낸다. 영상도 가사에 맞게."""
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
-    from test_cavn_maker import POP_MD
+    from test_cavn_maker import POP_MD, TEST_CAST
+    import cast
+    (tmp_path / "캐릭터목록.txt").write_text(TEST_CAST, encoding="utf-8")
+    monkeypatch.setattr(cast, "CAST_FILE", tmp_path / "캐릭터목록.txt")
     md = tmp_path / "칸쏘네1집.md"
     md.write_text(POP_MD, encoding="utf-8")
     with sync_playwright() as pw:

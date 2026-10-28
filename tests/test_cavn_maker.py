@@ -447,9 +447,20 @@ def test_long_album_list_uses_search(tmp_path):
     assert (songs / "Un'Estate Soltanto.wav").exists() and (songs / "Un'Estate Soltanto (1).wav").exists()
 
 
-def test_cast_helpers():
+TEST_CAST = """프로젝트: 캐릭터목록
+[칸쏘네]
+여: 쥴리, 안나
+남: 마태오, 브루노
+[50-60]
+여: 순자
+남: 정우
+"""
+
+
+def test_cast_helpers(tmp_path):
     import cast
-    project, groups = cast.load_cast()
+    (tmp_path / "캐릭터목록.txt").write_text(TEST_CAST, encoding="utf-8")
+    project, groups = cast.load_cast(tmp_path / "캐릭터목록.txt")
     assert project == "캐릭터목록" and groups["칸쏘네"] == {"여": ["쥴리", "안나"], "남": ["마태오", "브루노"]}
     g = groups["칸쏘네"]
     assert cast.parse_names("둘", g) == ["쥴리", "마태오"]
@@ -459,3 +470,11 @@ def test_cast_helpers():
     import pytest
     with pytest.raises(ValueError):
         cast.parse_names("수지", g)
+
+
+def test_real_character_list_file():
+    """cavn_music\\캐릭터목록.txt 가 읽히고, 묶음마다 여·남이 한 명 이상."""
+    import cast
+    project, groups = cast.load_cast()
+    assert project and groups
+    assert all(g["여"] and g["남"] for g in groups.values()), groups

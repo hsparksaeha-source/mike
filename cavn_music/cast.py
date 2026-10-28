@@ -18,8 +18,9 @@ CAST_FILE = Path(__file__).resolve().parent / "캐릭터목록.txt"
 DEFAULT_PROJECT = "캐릭터목록"
 
 
-def load_cast(path=CAST_FILE):
+def load_cast(path=None):
     """(Flow 프로젝트 이름, {묶음: {'여': [...], '남': [...]}})"""
+    path = path or CAST_FILE
     project, groups, cur = DEFAULT_PROJECT, {}, None
     try:
         text = Path(path).read_text(encoding="utf-8-sig")

@@ -23,6 +23,10 @@ def test_batch_runs_steps_in_order(tmp_path, monkeypatch):
     sacred = tmp_path / "미사곡5집.md"
     sacred.write_text(SACRED_MD, encoding="utf-8")
 
+    import cast
+    from test_cavn_maker import TEST_CAST
+    (tmp_path / "캐릭터목록.txt").write_text(TEST_CAST, encoding="utf-8")
+    monkeypatch.setattr(cast, "CAST_FILE", tmp_path / "캐릭터목록.txt")
     calls = []
     monkeypatch.setattr(batch_maker.cavn_maker, "run",
                         lambda md, out, **kw: calls.append(("노래", Path(md).stem, kw["master"], kw["confirm"])))
