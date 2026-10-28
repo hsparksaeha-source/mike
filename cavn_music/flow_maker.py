@@ -129,6 +129,10 @@ TILES_JS = """(box) => {
 }"""
 
 
+class VideoRefused(RuntimeError):
+    """Flow 가 영상 만들기를 거절함 (정책 위반, 유명인과 닮음 등) → 영상만 건너뛴다."""
+
+
 class Flow:
     def __init__(self, page):
         self.page = page
@@ -351,7 +355,23 @@ class Flow:
         self.approved = True
         log(message)
 
-    def wait_new(self, kind, before_keys, want, timeout, settle=10, after_approval=False):
+    REFUSE_JS = """() => {
+        const re = /정책|유명인|실존 인물|만들 수 없|생성할 수 없|생성할 수가 없|policy|violat|can.?t (generate|create)|unable to (generate|create)|public figure|celebrit/i;
+        return [...document.querySelectorAll('p, div, span')].filter(e => {
+            const own = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').trim();
+            const r = e.getBoundingClientRect();
+            return own.length > 6 && re.test(own) && r.width > 0 && r.height > 0;
+        }).length;
+    }"""
+
+    def refusal_count(self):
+        """대화 창에 '정책 위반 / 유명인과 닮음 → 만들 수 없음' 같은 거절 글이 몇 개 있는지."""
+        try:
+            return self.page.evaluate(self.REFUSE_JS)
+        except PlaywrightError:
+            return 0
+
+    def wait_new(self, kind, before_keys, want, timeout, settle=10, after_approval=False, refusals_before=None):
         """kind 칸이 want 개 이상 새로 생기고 settle 초 동안 늘지 않을 때까지 기다린다.
         after_approval: 확인 질문이 뜨면 승인된 뒤에 생긴 것만 센다 (그 사이 끝난 다른 트랙 영상을 잘못 세지 않게).
         질문이 90초 안에 안 뜨면(이미 '항상 승인'인 경우) 그냥 센다."""
@@ -360,8 +380,12 @@ class Flow:
         last_count, last_change, last_note = -1, time.time(), 0
         before_keys = set(before_keys)
         fails_before = self.failed_count()
+        if refusals_before is None:   # 보내기 전에 센 값을 받는 게 정확함 (거절이 바로 뜰 수도 있어서)
+            refusals_before = self.refusal_count() if kind == "video" else 0
         while time.time() < deadline:
             self.click_retry()
+            if kind == "video" and self.refusal_count() > refusals_before:
+                raise VideoRefused("Flow 가 영상을 만들 수 없다고 했습니다 (정책 위반·유명인과 닮음 등).")
             was_approved = self.approved
             self.approve()
             if after_approval:
@@ -959,12 +983,15 @@ def image_folder(out_dir, number):
     return folder
 
 
+NO_VIDEO_NAME = ".영상없음"   # Flow 가 이 트랙 영상을 거절해서 영상 없이 끝낸 표시
 DONE_NAME = ".flow완료"   # Flow 가 일부를 '실패'로 못 만들어서 15장보다 적어도, 만든 것은 다 받았다는 표시
 
 
 def track_done(image_folder, scene_dir, number, n_images):
     """이미지 n_images장 이상(또는 만든 것 전부를 받았다는 표시)과 영상이 다 있으면 끝난 트랙."""
-    if not image_folder.is_dir() or not video_path(scene_dir, number):
+    if not image_folder.is_dir():
+        return False
+    if not video_path(scene_dir, number) and not (image_folder / NO_VIDEO_NAME).exists():
         return False
     if (image_folder / DONE_NAME).exists():
         return True
@@ -1069,7 +1096,10 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
     save_state(folder, images=[img["key"] for img in images])
 
     have_video = video_path(scene_dir, track.number) is not None
-    if have_video:
+    if (folder / NO_VIDEO_NAME).exists():
+        log("  이 트랙 영상은 지난번에 Flow 가 거절해서 건너뜁니다")
+        video = None
+    elif have_video:
         log(f"  영상은 이미 받아 두었습니다 (장면\\{video_path(scene_dir, track.number).name}) → 영상은 건너뜀")
         video = None
     elif reuse_video == "state":
@@ -1090,9 +1120,17 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         log("  맨 끝 이미지를 프롬프트 칸에 끌어다 놓고 영상 요청")
         before_video = {t["key"] for t in flow.tiles()}
         flow.drag(flow.tile(first_made["key"], refresh=True), flow.prompt_box())
+        refusals_before = flow.refusal_count()
         flow.send_prompt(video_text)
-        video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True)[0]
-        log("  영상 완성")
+        try:
+            video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True,
+                                  refusals_before=refusals_before)[0]
+            log("  영상 완성")
+        except VideoRefused as e:
+            # 영상은 싱글곡에만 따로 쓰는 것이라, 거절되면 영상 없이 이미지만 받고 넘어간다
+            log(f"  !! {e} 영상은 건너뛰고 이미지만 받습니다.")
+            (folder / NO_VIDEO_NAME).write_text("Flow 가 영상을 거절함", encoding="utf-8")
+            video = None
     if video:
         save_state(folder, video=video["key"])
         # 영상을 먼저 받는다 (이미지 컬렉션에서 실패해도 영상은 남도록 → 다시 실행할 때 영상을 또 만들지 않음)

@@ -218,3 +218,21 @@ def test_add_character_both_ways(direct):
         chars = page.evaluate("window.attachedChars")
         browser.close()
     assert chars == ["쥴리", "마태오"]
+
+
+def test_video_refused_keeps_images(tmp_path, monkeypatch):
+    """Flow 가 영상을 거절하면(정책·유명인) 기다리지 않고 영상만 건너뛰고 이미지는 받는다. 다시 돌려도 끝난 트랙."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    from md_parser import parse_md
+    [track] = parse_md(EASY_MD)
+    folder, scenes = tmp_path / "이미지" / "1번", tmp_path / "장면"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&videorefuse=1")
+        flow_maker.make_track(flow_maker.Flow(page), track, folder, scenes, 15)
+        browser.close()
+    assert len(list(folder.glob("*.jpg"))) == 15
+    assert not scenes.exists() or not list(scenes.iterdir())
+    assert flow_maker.track_done(folder, scenes, 1, 15)

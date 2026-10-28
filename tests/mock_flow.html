@@ -203,7 +203,9 @@ function submit() {
   const att = attachment;
   attachment = null; document.getElementById("attach").innerHTML = "";
   const m = text.match(/(\d+)장/);
-  if (att) {
+  if (att && params.get("videorefuse") === "1") {   // 유명인과 닮았다며 영상을 거절하는 경우
+    chat.insertAdjacentHTML("beforeend", "<p>죄송합니다. 이 이미지는 실존 인물과 닮아 Google 정책상 동영상을 생성할 수 없습니다.</p>");
+  } else if (att) {
     if (params.get("newthread") === "1") chat.innerHTML = "";   // 새 대화
     // 질문과 버튼은 승인한 뒤에도 대화 창에 그대로 남고, '승인' 말풍선과 영상 미리보기가 붙는다
     const ask = document.createElement("div");
