@@ -480,12 +480,26 @@ class Flow:
             return 0
         if not pb:
             return 0
-        return self.page.evaluate("""pb => [...document.querySelectorAll('img, video')].filter(m => {
-            const r = m.getBoundingClientRect();
-            const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-            return r.width > 8 && r.width < 160 && cx > pb.x - 40 && cx < pb.x + pb.width + 40
-                && cy > pb.y - 140 && cy < pb.y + pb.height + 30;
-        }).length""", pb)
+        # 프롬프트 칸은 섀도 DOM 안에 있어서, 숨은 칸 안까지 내려가며 그림(img·video·배경 그림)을 센다
+        return self.page.evaluate("""pb => {
+            const all = [];
+            const walk = root => {
+                for (const e of root.querySelectorAll('*')) {
+                    all.push(e);
+                    if (e.shadowRoot) walk(e.shadowRoot);
+                }
+            };
+            walk(document);
+            return all.filter(m => {
+                const r = m.getBoundingClientRect();
+                if (r.width < 12 || r.width > 160 || r.height < 12 || r.height > 160) return false;
+                const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                if (!(cx > pb.x - 40 && cx < pb.x + pb.width + 40 && cy > pb.y - 140 && cy < pb.y + pb.height + 30)) return false;
+                if (m.tagName === 'IMG' || m.tagName === 'VIDEO' || m.tagName === 'CANVAS') return true;
+                const bg = getComputedStyle(m).backgroundImage;
+                return bg && bg !== 'none' && bg.includes('url(');
+            }).length;
+        }""", pb)
 
     def _picker_open(self):
         return bool(self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I))))
@@ -538,18 +552,25 @@ class Flow:
             self.page.keyboard.press("Escape")
             raise RuntimeError(f"캐릭터 '{name}' 을(를) 찾지 못했습니다. 캐릭터목록 프로젝트의 이름을 확인해 주세요.")
         # 4) [프롬프트에 추가] (이름을 누르는 것만으로 올라가고 창이 닫히는 경우도 있음)
+        clicked_add = False
         for _ in range(6):
             if self._prompt_attach_count() > attached_before:   # 벌써 올라갔으면 끝
+                break
+            if not self._picker_open():   # 이름을 누르자 창이 닫힘 = 바로 올라간 것
+                clicked_add = True
                 break
             add = self._boxes(self.page.get_by_role("button", name=re.compile("프롬프트에 추가|Add to prompt", re.I)))
             if not add:
                 add = self._boxes(self.page.get_by_text(re.compile(r"프롬프트에\s*추가|Add to prompt", re.I)))
             if add:
                 add[-1][0].click()
+                clicked_add = True
                 time.sleep(1.5)
                 break
             time.sleep(1)
-        if self._prompt_attach_count() <= attached_before:
+        # 그림을 셀 수 없게 그려지는 경우도 있으니, [프롬프트에 추가]를 눌렀고 창이 닫혔으면 올라간 것으로 본다
+        added = self._prompt_attach_count() > attached_before or (clicked_add and not self._picker_open())
+        if not added:
             if self._picker_open():
                 self.page.keyboard.press("Escape")
             raise RuntimeError(f"캐릭터 '{name}' 를 프롬프트에 올리지 못했습니다 ([프롬프트에 추가] 버튼을 찾지 못함).")
