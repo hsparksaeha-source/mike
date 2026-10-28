@@ -203,3 +203,18 @@ def test_pop_tracks_with_characters(tmp_path, monkeypatch):
     album = tmp_path / "out" / "칸쏘네1집"
     assert len(list((album / "이미지" / "2번").glob("*.jpg"))) == 15
     assert sorted(p.name for p in (album / "장면").iterdir()) == ["1.mp4", "2.mp4"]
+
+
+@pytest.mark.parametrize("direct", ["0", "1"])
+def test_add_character_both_ways(direct):
+    """[프롬프트에 추가] 를 눌러야 올라가는 경우와, 이름만 눌러도 바로 올라가는 경우 모두."""
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        page = browser.new_context(viewport={"width": 1700, "height": 1000}).new_page()
+        page.goto(f"{MOCK}?delay=300&directadd={direct}")
+        flow = flow_maker.Flow(page)
+        flow.add_character("쥴리", "캐릭터목록")
+        flow.add_character("마태오", "캐릭터목록")
+        chars = page.evaluate("window.attachedChars")
+        browser.close()
+    assert chars == ["쥴리", "마태오"]

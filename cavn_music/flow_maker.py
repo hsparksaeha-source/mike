@@ -472,8 +472,27 @@ class Flow:
         time.sleep(1)
         return True
 
+    def _prompt_attach_count(self):
+        """프롬프트 칸 위에 올라가 있는 그림(캐릭터·이미지) 수."""
+        try:
+            pb = self.prompt_box(wait=3).bounding_box()
+        except (RuntimeError, PlaywrightError):
+            return 0
+        if not pb:
+            return 0
+        return self.page.evaluate("""pb => [...document.querySelectorAll('img, video')].filter(m => {
+            const r = m.getBoundingClientRect();
+            const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+            return r.width > 8 && r.width < 160 && cx > pb.x - 40 && cx < pb.x + pb.width + 40
+                && cy > pb.y - 140 && cy < pb.y + pb.height + 30;
+        }).length""", pb)
+
+    def _picker_open(self):
+        return bool(self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I))))
+
     def add_character(self, name, project):
         """캐릭터 하나를 프롬프트 칸에 올린다."""
+        attached_before = self._prompt_attach_count()
         sb = self._open_asset_picker()
         big = 10_000
         left_col = (sb["x"] - 400, sb["x"] - 5, sb["y"] + sb["height"], big)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
@@ -518,15 +537,24 @@ class Flow:
         else:
             self.page.keyboard.press("Escape")
             raise RuntimeError(f"캐릭터 '{name}' 을(를) 찾지 못했습니다. 캐릭터목록 프로젝트의 이름을 확인해 주세요.")
-        # 4) [프롬프트에 추가]
-        add = self._boxes(self.page.get_by_role("button", name=re.compile("프롬프트에 추가|Add to prompt", re.I)))
-        if not add:
-            add = self._boxes(self.page.get_by_text(re.compile(r"^\s*프롬프트에 추가\s*$")))
-        if not add:
+        # 4) [프롬프트에 추가] (이름을 누르는 것만으로 올라가고 창이 닫히는 경우도 있음)
+        for _ in range(6):
+            if self._prompt_attach_count() > attached_before:   # 벌써 올라갔으면 끝
+                break
+            add = self._boxes(self.page.get_by_role("button", name=re.compile("프롬프트에 추가|Add to prompt", re.I)))
+            if not add:
+                add = self._boxes(self.page.get_by_text(re.compile(r"프롬프트에\s*추가|Add to prompt", re.I)))
+            if add:
+                add[-1][0].click()
+                time.sleep(1.5)
+                break
+            time.sleep(1)
+        if self._prompt_attach_count() <= attached_before:
+            if self._picker_open():
+                self.page.keyboard.press("Escape")
+            raise RuntimeError(f"캐릭터 '{name}' 를 프롬프트에 올리지 못했습니다 ([프롬프트에 추가] 버튼을 찾지 못함).")
+        if self._picker_open():
             self.page.keyboard.press("Escape")
-            raise RuntimeError("[프롬프트에 추가] 버튼을 찾지 못했습니다.")
-        add[0][0].click()
-        time.sleep(1.5)
         log(f"    캐릭터 '{name}' 를 프롬프트에 올림")
 
     def drag(self, source, target):

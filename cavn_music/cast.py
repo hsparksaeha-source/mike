@@ -76,6 +76,16 @@ def parse_names(text, group):
     known = group["여"] + group["남"]
     names = [n for n in re.split(r"[\s,，、/+]+|(?<=\S)(?:와|과)(?=\s|$)", text) if n]
     names = [re.sub(r"(와|과)$", "", n) if n not in known else n for n in names]
+    # 철자가 조금 달라도(줄리 → 쥴리) 목록에서 하나로 정해지면 그 이름으로 본다
+    import difflib
+    fixed = []
+    for n in names:
+        if n in known:
+            fixed.append(n)
+            continue
+        close = [k for k in known if _similar(n, k)] or difflib.get_close_matches(n, known, n=2, cutoff=0.5)
+        fixed.append(close[0] if len(close) == 1 else n)
+    names = fixed
     bad = [n for n in names if n not in known]
     if bad or not names:
         raise ValueError(f"캐릭터목록에 없는 이름: {', '.join(bad) or text}")
@@ -122,3 +132,24 @@ def ask_cast(tracks, group):
             except ValueError as e:
                 print(f"    !! {e}")
     return cast
+
+
+def _jamo(text):
+    """한글을 자모로 풀되, 헷갈리기 쉬운 모음은 같은 것으로 (ㅠ·ㅜ, ㅕ·ㅓ, ㅛ·ㅗ, ㅑ·ㅏ, ㅖ·ㅔ·ㅐ·ㅒ)."""
+    same = {"ㅠ": "ㅜ", "ㅕ": "ㅓ", "ㅛ": "ㅗ", "ㅑ": "ㅏ", "ㅖ": "ㅔ", "ㅐ": "ㅔ", "ㅒ": "ㅔ"}
+    vowels = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+    out = []
+    for ch in text:
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            out.append(str(code // 588))
+            v = vowels[(code % 588) // 28]
+            out.append(same.get(v, v))
+            out.append(str(code % 28))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _similar(a, b):
+    return len(a) == len(b) and _jamo(a) == _jamo(b)

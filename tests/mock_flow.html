@@ -277,7 +277,16 @@ document.getElementById("addAsset").onclick = () => {
     pk.querySelectorAll(".k").forEach(d => d.onclick = () => { kind = d.textContent; paint(); });
     const q = pk.querySelector(".q");
     q.oninput = () => { query = q.value; setTimeout(() => { paint(); const nq = pk.querySelector(".q"); nq.focus(); }, 200); };
-    pk.querySelectorAll(".c").forEach(d => d.onclick = () => { chosen = d.querySelector("span").textContent; paint(); });
+    pk.querySelectorAll(".c").forEach(d => d.onclick = () => {
+      chosen = d.querySelector("span").textContent;
+      if (params.get("directadd") === "1") {   // 이름을 누르면 바로 프롬프트에 올라가고 창이 닫히는 경우
+        window.attachedChars.push(chosen);
+        document.getElementById("attach").insertAdjacentHTML("beforeend", `<img src="${svg(chosen.length)}" style="width:20px">`);
+        pk.remove();
+        return;
+      }
+      paint();
+    });
     const add = pk.querySelector(".addp");
     if (add) add.onclick = () => {
       window.attachedChars.push(chosen);
