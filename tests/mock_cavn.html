@@ -222,7 +222,10 @@ if (page === "albums") {
     m.className = "menu";
     const items = ["MP3 오디오 다운로드", "WAV 오디오 다운로드", "가사 비디오 다운로드", "스크롤 가사 다운로드",
                    "텍스트 가사 다운로드", "곡 커버 다운로드", "창작 증명서 받기"];
-    m.innerHTML = "<div>다운로드 및 내보내기</div>" + items.map(i => `<div class="item">${i}</div>`).join("");
+    // lrclate: 곡이 다 만들어진 뒤 한동안 '스크롤 가사' 메뉴가 안 눌림 (실제 CAVN 처럼 가사 맞추기가 늦게 끝남)
+    const lrcLate = Number(params.get("lrclate") || 0) && Date.now() < s.readyAt + Number(params.get("lrclate"));
+    m.innerHTML = "<div>다운로드 및 내보내기</div>" + items.map(i =>
+      `<div class="item"${i === "스크롤 가사 다운로드" && lrcLate ? ' style="pointer-events:none;opacity:.4"' : ""}>${i}</div>`).join("");
     m.querySelectorAll(".item").forEach(div => div.onclick = () => {
       const item = div.textContent;
       closeAll();

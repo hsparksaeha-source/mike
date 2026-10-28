@@ -772,6 +772,8 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
             lengths = [cavn.song_length(r) for r in rows]
             long_i = 0 if (lengths[0] or 0) >= (lengths[1] or 0) else 1
         for i, base, items in ((long_i, long_base, long_items), (1 - long_i, short_base, short_items)):
+            if lrc_ok(long_base, short_base):   # LRC 는 둘 중 하나만 있으면 됨
+                items = [it for it in items if it[3] != ".lrc"]
             missing = [it for it in items if not has_file(base, it)]
             if missing:
                 download_song(cavn, rows[i], base, missing)
@@ -854,6 +856,10 @@ def status(out_dir, title, master=0, instrumental=False):
         return "need_extra"
     long_base, short_base = out_dir / fname, out_dir / f"{fname} (1)"
     long_items, short_items = items_for(instrumental)
+    # 스크롤 가사(LRC)는 긴 곡·짧은 곡 중 하나만 있어도 됨 (번역기 이중 자막용)
+    if lrc_ok(long_base, short_base):
+        long_items = [it for it in long_items if it[3] != ".lrc"]
+        short_items = [it for it in short_items if it[3] != ".lrc"]
     if not all(has_file(long_base, it) for it in long_items) or \
             not all(has_file(short_base, it) for it in short_items):
         return "need_extra"
@@ -861,6 +867,10 @@ def status(out_dir, title, master=0, instrumental=False):
 
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def lrc_ok(long_base, short_base):
+    return any(Path(str(b) + ".lrc").exists() for b in (long_base, short_base))
 
 
 def has_file(base, item):
@@ -985,6 +995,25 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
                 cavn.page.goto("about:blank")  # 마스터링 화면 등에 남아 있을 수 있으니 처음부터
                 cavn.open_create()
                 cavn.select_album(album_name, "right")
+        # 스크롤 가사(LRC)는 곡을 막 만든 직후엔 메뉴가 안 눌릴 때가 있다 → 앨범을 다 돈 뒤 빠진 것만 한 번 더
+        retry = [t for t, _ in todo if t not in failed and not t.classical
+                 and status(out_dir, t.title, master, t.classical) == "need_extra"]
+        if retry:
+            print()
+            log(f"빠진 파일(스크롤 가사 등)을 한 번 더 받아 봅니다: {len(retry)}곡")
+            for t in retry:
+                log(f"  {t.number}. {t.title}")
+                try:
+                    cavn.open_create()
+                    cavn.select_album(album_name, "right")
+                    make_track(cavn, t, out_dir, album_name, master)
+                except Exception as e:
+                    log(f"  !! 다시 받기 실패: {e}")
+        for t, _ in todo:   # 번역기 이중 자막에 LRC 가 하나는 있어야 함
+            fname = safe_filename(t.title)
+            if not t.classical and (out_dir / f"{fname}.wav").exists() and not any(
+                    (out_dir / f"{fname}{tail}.lrc").exists() for tail in ("", " (1)")):
+                log(f"  !! {t.number}. {t.title}: 스크롤 가사(LRC)가 하나도 없습니다. 다시 실행하거나 CAVN 에서 직접 받아 주세요.")
         print()
         # 캡컷 조립 프로그램은 노래 파일을 날짜순으로 줄 세우므로, 나중에 받은 곡이 뒤로 가지 않게
         fix_song_order(out_dir, tracks)

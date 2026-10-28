@@ -272,9 +272,9 @@ def test_resume_missing_lyrics_and_mastering(tmp_path):
     assert len(second["created"]) == 1                      # 새로 만들지 않음
     assert len(second["mastered"]) == 2 and second["mastered"][1] == second["mastered"][0]   # 같은 긴 곡
     assert (songs / f"{title}_가사본문.txt").read_text().startswith("가사 본문만")
-    short_id = (songs / f"{title} (1).wav").read_text().split("#")[-1]
-    assert (songs / f"{title} (1).lrc").read_text().endswith("#" + short_id)   # 짧은 곡의 lrc
-    assert len(list(p for p in songs.iterdir() if not p.name.startswith("."))) == 11
+    # 스크롤 가사는 긴 곡 것(제목.lrc)이 있으니 짧은 곡 lrc 는 다시 받지 않음 (둘 중 하나만 있으면 됨)
+    assert (songs / f"{title}.lrc").exists() and not (songs / f"{title} (1).lrc").exists()
+    assert len(list(p for p in songs.iterdir() if p.is_file() and not p.name.startswith("."))) == 10
 
 
 EASY_MD = """# 낭만 오케스트라 3집
@@ -478,3 +478,12 @@ def test_real_character_list_file():
     project, groups = cast.load_cast()
     assert project and groups
     assert all(g["여"] and g["남"] for g in groups.values()), groups
+
+
+def test_lrc_retried_after_album(tmp_path):
+    """곡을 막 만든 직후 '스크롤 가사' 메뉴가 안 눌려도, 앨범을 다 돈 뒤 한 번 더 받아서 LRC 를 채운다."""
+    one_song = POP_MD.split("# Track 2.")[0]
+    songs, state = run_mock(tmp_path, one_song, "칸쏘네.md", "150,200", extra="&lrclate=25000")
+    title = "You Were Already There"
+    assert (songs / f"{title}.lrc").exists() and (songs / f"{title} (1).lrc").exists()
+    assert len(state["created"]) == 1
