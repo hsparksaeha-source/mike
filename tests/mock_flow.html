@@ -269,7 +269,9 @@ document.getElementById("addAsset").onclick = () => {
     const names = kind === "캐릭터" ? (charProjects[project] || []).filter(n => n.includes(query)) : [];
     pk.innerHTML = `
       <div style="position:absolute;left:10px;top:10px"><button class="proj">${project} <span class="arr">arrow_drop_down</span></button></div>
-      <div style="position:absolute;left:230px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:380px"></div>
+      ${params.get("wrapsearch") === "1"   // 실제처럼 검색칸이 종류 칸은 빠진 큰 상자 안에 들어 있는 경우
+        ? `<div style="position:absolute;left:220px;top:0;width:465px;height:300px"><div style="position:absolute;left:10px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:380px"></div></div>`
+        : `<div style="position:absolute;left:230px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:380px"></div>`}
       <div style="position:absolute;left:10px;top:60px" class="kinds">
         ${["전체", "이미지", "동영상", "음성", "캐릭터", "아바타", "업로드"].map(k => `<div class="k" style="padding:6px">${k}</div>`).join("")}</div>
       <div style="position:absolute;left:230px;top:60px;width:200px" class="list">
@@ -303,7 +305,7 @@ document.getElementById("addAsset").onclick = () => {
     if (add) add.onclick = () => {
       window.attachedChars.push(chosen);
       document.getElementById("attach").insertAdjacentHTML("beforeend", `<img src="${svg(chosen.length)}" style="width:20px">`);
-      pk.remove();
+      if (params.get("stickypicker") !== "1") pk.remove();   // stickypicker: 올린 뒤에도 창이 열린 채로 남는 경우
     };
   };
   if (params.get("slowpicker") === "1") {   // 창이 열리고 왼쪽 위 프로젝트 칸이 늦게 그려지는 경우
@@ -312,6 +314,10 @@ document.getElementById("addAsset").onclick = () => {
   } else paint();
   document.body.appendChild(pk);
 };
+
+document.addEventListener("keydown", e => {   // Esc 로 애셋 고르기 창 닫기
+  if (e.key === "Escape") { const pk = document.getElementById("picker"); if (pk) pk.remove(); }
+});
 
 document.getElementById("libPlus").onclick = () => {   // 라이브러리 [+]: 바로 새 컬렉션
   items.unshift({id: nextId++, kind: "collection", members: []}); draw();

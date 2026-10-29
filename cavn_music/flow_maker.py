@@ -217,6 +217,8 @@ class Flow:
 
     # -- 격자
     def tiles(self, kind=None):
+        if self._picker_open():   # 애셋 고르기 창이 열려 있으면 격자를 훑을 수 없다
+            self.close_picker()
         try:   # 입력칸을 못 찾아도 이미지 세기는 그대로 한다 (입력칸 안의 이미지만 못 뺄 뿐)
             box = self.prompt_box(wait=3).evaluate("""e => {
                 const rect = x => { const r = x.getBoundingClientRect();
@@ -530,18 +532,42 @@ class Flow:
         boxes = self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I)))
         if not boxes:
             return None
+        # 왼쪽 종류 칸(전체·이미지·…·캐릭터)과 왼쪽 위 프로젝트 칸까지 들어 있어야 하므로,
+        # 검색칸보다 왼쪽으로 충분히 넓고(100px 이상) 화면 전체는 아닌 상자를 고른다
         return boxes[0][0].evaluate("""e => {
+            const sb = e.getBoundingClientRect();
             let p = e;
-            for (let i = 0; i < 15 && p.parentElement; i++) {
+            for (let i = 0; i < 20 && p.parentElement; i++) {
                 p = p.parentElement;
                 const r = p.getBoundingClientRect();
-                if (r.width >= 450 && r.height >= 250) return {x: r.left, y: r.top, width: r.width, height: r.height};
+                if (r.width >= innerWidth * 0.85 || r.height >= innerHeight * 0.95) break;
+                if (r.left <= sb.left - 100 && r.width >= 450 && r.height >= 250)
+                    return {x: r.left, y: r.top, width: r.width, height: r.height};
             }
             return null;
         }""")
 
     def _picker_open(self):
         return bool(self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I))))
+
+    def close_picker(self):
+        """애셋 고르기 창이 열려 있으면 닫는다. 열린 채로 두면 뒤의 격자를 훑거나(스캔) 이미지를 올릴 수 없다."""
+        for k in range(6):
+            if not self._picker_open():
+                return True
+            if k < 4:
+                self.page.keyboard.press("Escape")
+            else:   # Esc 로 안 닫히면 프롬프트 칸을 한 번 눌러 창 밖을 누른다
+                try:
+                    pb = self.prompt_box(wait=3).bounding_box()
+                    self.page.mouse.click(pb["x"] + pb["width"] / 2, pb["y"] + pb["height"] / 2)
+                except (RuntimeError, PlaywrightError, TypeError):
+                    pass
+            time.sleep(1)
+        if self._picker_open():
+            log("    !! 애셋 고르기 창이 닫히지 않습니다")
+            return False
+        return True
 
     def add_character(self, name, project):
         """캐릭터 하나를 프롬프트 칸에 올린다. 안 되면 창을 닫고 한 번 더 해 본다."""
@@ -552,34 +578,45 @@ class Flow:
                 if attempt == 2:
                     raise
                 log(f"    (캐릭터 올리기 다시 시도: {str(e).splitlines()[0]})")
-                for _ in range(2):
-                    self.page.keyboard.press("Escape")
-                    time.sleep(1)
+                self.close_picker()
+            finally:
+                if attempt == 2:
+                    self.close_picker()
 
     def _add_character_once(self, name, project):
         attached_before = self._prompt_attach_count()
         sb = self._open_asset_picker()
         # 고르기 창 안만 본다 (창 밖 격자의 영상 ▶ 단추를 프로젝트 칸으로 잘못 누르던 문제)
-        pr = self._picker_rect() or {"x": sb["x"] - 400, "y": sb["y"] - 40, "width": 10_000, "height": 10_000}
+        pr = self._picker_rect() or {"x": sb["x"] - 200, "y": sb["y"] - 40, "width": 10_000, "height": 10_000}
         px0, px1, py1 = pr["x"] - 2, pr["x"] + pr["width"] + 2, pr["y"] + pr["height"] + 2
-        left_col = (px0, sb["x"] - 5, sb["y"] + sb["height"], py1)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
+        vh = self.page.evaluate("innerHeight")
+        # 왼쪽 종류 칸(전체·이미지·…·캐릭터)은 창 상자를 잘못 잡아도 놓치지 않게 검색칸 왼쪽 아래를 넓게 본다
+        left_col = (min(px0, sb["x"] - 320), sb["x"] - 5, sb["y"] + sb["height"], max(py1, vh))
         below = (px0, px1, sb["y"] + sb["height"], py1 + 600)          # 창 안쪽 (검색칸 아래, 펼친 목록 포함)
-        # 1) 왼쪽 '캐릭터'
-        if not self._click_text_in("캐릭터", left_col):
+        # 1) 왼쪽 '캐릭터' (창이 막 열렸을 때는 종류 칸이 늦게 그려질 수 있음)
+        for k in range(8):
+            if self._click_text_in("캐릭터", left_col):
+                break
+            time.sleep(1)
+        else:
             raise RuntimeError("애셋 고르기 창에서 '캐릭터'를 찾지 못했습니다.")
         # 2) 왼쪽 위 프로젝트 고르기 → '캐릭터목록'
         if not self._boxes(self.page.get_by_text(name, exact=True), (sb["x"] - 10, px1, sb["y"], py1)):
             row = (px0, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
             drop = []
+            play = re.compile(r"play|재생|▶", re.I)
             for _ in range(8):   # 창이 막 열렸을 때는 왼쪽 위 칸이 늦게 그려질 수 있음
-                drop = self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
+                drop = [(e, bx) for e, bx in self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
+                        if not play.search((e.text_content() or "") + " " + (e.get_attribute("aria-label") or ""))]
                 if drop:
                     break
                 time.sleep(1)
             if not drop:
                 raise RuntimeError("애셋 고르기 창 왼쪽 위의 프로젝트 고르기 칸을 찾지 못했습니다.")
             # 날짜(프로젝트 이름) 옆의 아래 화살표를 눌러야 프로젝트 목록이 펼쳐진다
-            drop.sort(key=lambda eb: eb[1]["x"])
+            # → 화살표나 날짜(숫자)가 들어 있는 칸을 먼저, 그다음 왼쪽부터
+            arrowish = re.compile(r"arrow_drop_down|expand_more|keyboard_arrow_down|▾|▼|\d")
+            drop.sort(key=lambda eb: (not arrowish.search(eb[0].text_content() or ""), eb[1]["x"]))
             el, box = drop[0]
             arrow = self._boxes(self.page.get_by_text(re.compile(r"^\s*(arrow_drop_down|expand_more|keyboard_arrow_down|▾|▼)\s*$")),
                                 (box["x"], box["x"] + box["width"] + 10, box["y"] - 5, box["y"] + box["height"] + 5))
@@ -635,14 +672,13 @@ class Flow:
                 time.sleep(1.5)
                 break
             time.sleep(1)
-        # 그림을 셀 수 없게 그려지는 경우도 있으니, [프롬프트에 추가]를 눌렀고 창이 닫혔으면 올라간 것으로 본다
-        added = self._prompt_attach_count() > attached_before or (clicked_add and not self._picker_open())
+        # 그림을 셀 수 없게 그려지는 경우도 있으니, [프롬프트에 추가]를 눌렀으면 (창이 남아 있으면 닫고) 올라간 것으로 본다
+        added = self._prompt_attach_count() > attached_before or clicked_add
         if not added:
             if self._picker_open():
                 self.page.keyboard.press("Escape")
             raise RuntimeError(f"캐릭터 '{name}' 를 프롬프트에 올리지 못했습니다 ([프롬프트에 추가] 버튼을 찾지 못함).")
-        if self._picker_open():
-            self.page.keyboard.press("Escape")
+        self.close_picker()
         log(f"    캐릭터 '{name}' 를 프롬프트에 올림")
 
     def drag(self, source, target):
@@ -1049,6 +1085,8 @@ def request_images(flow, prompt, n_images, request=IMAGE_REQUEST, characters=(),
     before = {t["key"] for t in flow.tiles()}
     for name in characters:
         flow.add_character(name, project)
+    if characters:
+        flow.close_picker()
     log(f"  이미지 {n_images}장 요청")
     flow.send_prompt(f"{prompt}\n\n{request.format(n=n_images)}")
     images = flow.wait_new("image", before, n_images, IMAGE_TIMEOUT_SEC)

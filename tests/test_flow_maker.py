@@ -269,3 +269,20 @@ def test_image_urls_change_after_generation(tmp_path, monkeypatch):
         count = flow_maker.collect_images(flow, images, tmp_path / "배경")
         browser.close()
     assert count == 4
+
+
+def test_add_character_search_in_wrapper_and_picker_stays_open():
+    """검색칸이 종류 칸이 빠진 큰 상자 안에 있어도 왼쪽 '캐릭터' 를 누르고,
+    올린 뒤 창이 열린 채로 남으면 닫아서 격자를 훑을 수 있게 한다."""
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        page = browser.new_context(viewport={"width": 1700, "height": 1000}).new_page()
+        page.goto(f"{MOCK}?delay=300&wrapsearch=1&stickypicker=1")
+        flow = flow_maker.Flow(page)
+        flow.add_character("소라", "캐릭터목록")
+        flow.add_character("서준", "캐릭터목록")
+        chars = page.evaluate("window.attachedChars")
+        still_open = page.evaluate("!!document.getElementById('picker')")
+        browser.close()
+    assert chars == ["소라", "서준"]
+    assert not still_open
