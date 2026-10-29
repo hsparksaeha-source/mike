@@ -124,7 +124,9 @@ TILES_JS = """(box) => {
             ? [m.currentSrc || m.src || '', m.poster || '', tile.querySelector('img') ? tile.querySelector('img').src : '']
                 .filter(Boolean).map(norm).join('|')
             : norm(m.currentSrc || m.src || '');
-        add(tile, isVideo ? 'video' : 'image', (isVideo ? 'video:' : 'image:') + src,
+        // 영상 칸에 그림 주소가 없으면(포스터를 배경으로 그리는 경우) 제목 글씨로 구별한다
+        const cap = (tile.innerText || '').replace(/play_circle|videocam|movie|favorite|more_vert|\\s+/g, ' ').trim();
+        add(tile, isVideo ? 'video' : 'image', (isVideo ? 'video:' : 'image:') + (src || (isVideo && cap ? 't:' + cap : '')),
             m.alt || m.getAttribute('aria-label') || tile.getAttribute('aria-label') || '');
     });
     out.sort((a, b) => Math.abs(a.y - b.y) > 20 ? a.y - b.y : a.x - b.x);
@@ -557,7 +559,7 @@ class Flow:
                 # (7번 트랙에 3번 영상을 받던 문제) 맨 위 줄에 있는 영상만 센다
                 self._scroll_grid(to_top=True)
                 every = self.tiles()
-                top = {t["key"] for t in every if t["y"] <= min((u["y"] for u in every), default=0) + 40}
+                top = {t["key"] for t in every[:12]}   # 격자 맨 앞 12칸 (맨 윗줄과 그다음 줄 정도)
                 new = [t for t in every if t["kind"] == "video" and t["key"] in top
                        and t["key"] not in before_keys and not t["key"].endswith(":")]
             else:
@@ -581,6 +583,12 @@ class Flow:
             if time.time() - last_note > 60:
                 log(f"  기다리는 중... (새 {'이미지' if kind == 'image' else '영상'} {len(new)}개)")
                 last_note = time.time()
+                if kind == "video" and not new and not getattr(self, "_video_debug", False) and time.time() - start > 240:
+                    # 고칠 때 볼 수 있게: 격자 맨 앞 칸들이 무엇으로 보이는지 남긴다
+                    self._video_debug = True
+                    for t in self.tiles()[:4]:
+                        seen = "예전" if t["key"] in before_keys else "새것"
+                        log(f"    (맨 앞 칸: {t['kind']} / {seen} / {caption(t['text'])[:30]} / {t['key'][:50]})")
             time.sleep(3)
         raise RuntimeError(f"{'이미지가' if kind == 'image' else '영상이'} 제한 시간 안에 다 만들어지지 않았습니다.")
 

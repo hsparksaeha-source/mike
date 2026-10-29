@@ -206,7 +206,8 @@ def test_pop_tracks_with_characters(tmp_path, monkeypatch):
     assert images[0]["text"].startswith("You Were Already There\n\n")
     assert "캐릭터(마태오)를 주인공으로 가사에 맞게 16:9 이미지 15장" in images[0]["text"]
     assert "캐릭터(안나와 브루노)를 주인공으로" in images[1]["text"]
-    assert all(v["text"].endswith("이 이미지로 가사에 맞게 영상을 만들어 주세요.") for v in videos) and len(videos) == 2
+    assert all("이 이미지로 가사에 맞게 영상을 만들어 주세요.\n(사용할 이미지: '" in v["text"] for v in videos)
+    assert len(videos) == 2
     album = tmp_path / "out" / "칸쏘네1집"
     assert len(list((album / "이미지" / "2번").glob("*.jpg"))) == 15
     assert sorted(p.name for p in (album / "장면").iterdir()) == ["1.mp4", "2.mp4"]
