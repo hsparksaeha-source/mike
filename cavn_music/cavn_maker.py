@@ -824,6 +824,25 @@ def make_track(cavn, track, out_dir, album_name, master=0, pop_include_genre=POP
         master_songs(cavn, title, long_i, long_base, short_base, album_name, master)
 
 
+def fetch_missing_lrc(cavn, track, out_dir):
+    """긴 곡·짧은 곡 중 빠진 스크롤 가사(LRC)만 받는다."""
+    title = track.title
+    fname = safe_filename(title)
+    long_base, short_base = out_dir / fname, out_dir / f"{fname} (1)"
+    cavn.wait_list_loaded()
+    cavn.search(title)
+    rows = cavn.song_rows(title)[:2]
+    if len(rows) < 2:
+        raise RuntimeError("곡 목록에서 이 제목의 곡 2개를 찾지 못했습니다.")
+    long_i = load_long_i(out_dir, title)
+    if long_i is None:
+        return
+    lrc = [it for it in AUDIO_ITEMS if it[3] == ".lrc"]
+    for i, base in ((long_i, long_base), (1 - long_i, short_base)):
+        if not Path(str(base) + ".lrc").exists():
+            download_song(cavn, rows[i], base, lrc)
+
+
 def master_songs(cavn, title, long_i, long_base, short_base, album_name, master):
     """긴 곡 하나만 마스터링 (크레딧 절약). 마스터링 화면으로 갔다가 곡 만들기 화면으로 돌아온다."""
     for i, base, name in [(long_i, long_base, "긴 곡")]:
@@ -996,8 +1015,13 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
                 cavn.open_create()
                 cavn.select_album(album_name, "right")
         # 스크롤 가사(LRC)는 곡을 막 만든 직후엔 메뉴가 안 눌릴 때가 있다 → 앨범을 다 돈 뒤 빠진 것만 한 번 더
+        def lrc_missing(t):
+            f = safe_filename(t.title)
+            return (out_dir / f"{f}.wav").exists() and not all(
+                (out_dir / f"{f}{tail}.lrc").exists() for tail in ("", " (1)"))
+        # 빠진 파일이 있거나, LRC 가 하나라도 빠진 곡 (LRC 는 가능하면 둘 다 받는다)
         retry = [t for t, _ in todo if t not in failed and not t.classical
-                 and status(out_dir, t.title, master, t.classical) == "need_extra"]
+                 and (status(out_dir, t.title, master, t.classical) == "need_extra" or lrc_missing(t))]
         if retry:
             print()
             log(f"빠진 파일(스크롤 가사 등)을 한 번 더 받아 봅니다: {len(retry)}곡")
@@ -1006,7 +1030,10 @@ def run(md_path, out_root, only=None, dry_run=False, page=None,
                 try:
                     cavn.open_create()
                     cavn.select_album(album_name, "right")
-                    make_track(cavn, t, out_dir, album_name, master)
+                    if status(out_dir, t.title, master, t.classical) == "need_extra":
+                        make_track(cavn, t, out_dir, album_name, master)
+                    if lrc_missing(t):
+                        fetch_missing_lrc(cavn, t, out_dir)
                 except Exception as e:
                     log(f"  !! 다시 받기 실패: {e}")
         for t, _ in todo:   # 번역기 이중 자막에 LRC 가 하나는 있어야 함
