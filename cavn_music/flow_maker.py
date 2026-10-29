@@ -57,6 +57,7 @@ LYRIC_IMAGE_REQUEST = "캐릭터({names})를 주인공으로 가사에 맞게 16
 LYRIC_VIDEO_REQUEST = "이 이미지로 가사에 맞게 영상을 만들어 주세요."
 PROMPT_PLACEHOLDER = "무엇을 만들고 싶으신가요?"
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+NEW_GRACE_SEC = 8   # 보낸 뒤 이 초 안에 '새로' 보이는 칸은 Flow 가 만든 것일 수 없음 → 예전 칸으로 본다
 VIDEO_EXTS = (".mp4", ".mov", ".webm")
 
 
@@ -230,25 +231,21 @@ class Flow:
         box = self.prompt_box()
         box.click()
         self.page.keyboard.insert_text(text)
-        time.sleep(0.5)
-        self.page.keyboard.press("Enter")
+        time.sleep(0.8)
+        # 보내기는 프롬프트 칸 오른쪽 아래 구석의 → 화살표로 (Enter 는 안 보내질 때가 있음). 화살표를 못 찾으면 Enter
+        if not self._click_send_arrow():
+            self.page.keyboard.press("Enter")
         time.sleep(2)
-        # Enter 로 안 보내졌으면(글이 그대로 남아 있으면) 프롬프트 칸 오른쪽 아래 구석의 보내기(→) 화살표.
+        # 글이 칸에 그대로 남아 있으면 안 보내진 것 → 화살표를 다시 누른다.
         # 보내면 Flow 가 입력칸을 새로 그리므로, 예전 칸을 기다리지 말고 다시 찾아서 확인한다.
-        # (예전에는 칸의 글을 처음 20자로 비교했는데 줄바꿈이 달라 '안 보내짐' 을 못 알아채고 멈춰 있었다)
         for attempt in range(4):
             if not self._prompt_text():
                 return
             if self._click_send_arrow():
-                log("    Enter 로 안 보내져서 프롬프트 칸의 보내기(→) 화살표를 눌렀습니다.")
+                log("    아직 안 보내져서 프롬프트 칸의 보내기(→) 화살표를 다시 눌렀습니다.")
             time.sleep(2.5)
         if self._prompt_text():
             log("    !! 프롬프트를 보내지 못했습니다. Flow 프롬프트 칸 오른쪽 아래의 → 화살표를 직접 눌러 주세요.")
-            return
-        # 글이 올라간 뒤에도 Flow 가 멈춰 있을 때가 있다 → 빈 칸의 → 화살표를 한 번 더 누르면 진행된다 (승인 질문이 뜸)
-        time.sleep(3)
-        if self.ask_count() <= self.asks_before and not self._questions() and self._click_send_arrow():
-            log("    프롬프트 칸의 보내기(→) 화살표를 한 번 더 눌렀습니다.")
 
     def _prompt_text(self):
         try:
@@ -529,6 +526,10 @@ class Flow:
             else:
                 self._scroll_grid(to_top=True)
                 new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
+            if new and time.time() - start < NEW_GRACE_SEC:
+                # 이렇게 빨리 생길 수는 없다 → 화면이 다시 그려져 주소가 바뀐 예전 칸 (새 이미지 50개 문제)
+                before_keys |= {t["key"] for t in new}
+                new = []
             fails = max(0, self.failed_count() - fails_before)   # Flow 가 못 만든 칸 ('실패 … 수요가 많습니다')
             if len(new) + fails != last_count:
                 last_count, last_change = len(new) + fails, time.time()
@@ -1473,8 +1474,17 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
         video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
     log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
     before_video = {t["key"] for t in flow.tiles()}
-    found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
-    flow.drag(flow.tile(found["key"]) if found else flow.tile(source["key"], refresh=True), flow.prompt_box())
+    # 이미지를 프롬프트 칸에 올린 것을 확인한 뒤에만 영상을 요청한다 (이미지 없이 영상 요청을 보내지 않게)
+    attached_before = flow._prompt_attach_count()
+    for attempt in range(3):
+        found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
+        flow.drag(flow.tile(found["key"]) if found else flow.tile(source["key"], refresh=True), flow.prompt_box())
+        time.sleep(1.5)
+        if flow._prompt_attach_count() > attached_before:
+            break
+        log("    (이미지가 프롬프트 칸에 안 올라가서 다시 끌어다 놓습니다)")
+    else:
+        raise RuntimeError("이미지를 프롬프트 칸에 올리지 못해서 영상 요청을 보내지 않았습니다.")
     refusals_before = flow.refusal_count()
     flow.send_prompt(video_text)
     try:
