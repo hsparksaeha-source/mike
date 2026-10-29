@@ -362,8 +362,9 @@ class Flow:
             time.sleep(1)
         return None
 
-    def find_image(self, img, used_keys=(), used_titles=()):
-        """이미지 칸을 주소로, 주소가 바뀌었으면 제목으로 찾는다. 이미 쓴 칸은 빼고. 못 찾으면 None."""
+    def find_image(self, img, used_keys=(), used_titles=(), top=None):
+        """이미지 칸을 주소로, 주소가 바뀌었으면 제목으로 찾는다. 이미 쓴 칸은 빼고. 못 찾으면 None.
+        top: 격자 맨 앞 몇 장 안에서만 찾는다 (같은 제목의 예전 트랙 그림이 아래쪽에 있을 수 있어서)."""
         title = tile_title(img.get("text"))
         by_title = title and title not in used_titles
 
@@ -371,7 +372,11 @@ class Flow:
             if t["key"] in used_keys:
                 return False
             return t["key"] == img["key"] or bool(by_title and tile_title(t["text"]) == title)
-        return self.scan_grid(match, "image")
+        if top is None:
+            return self.scan_grid(match, "image")
+        self._scroll_grid(to_top=True)
+        time.sleep(0.8)
+        return next((t for t in self.tiles("image")[:top] if match(t)), None)
 
     def click_send(self):
         """프롬프트 칸이 비어 있을 때 오른쪽 보내기(→) 화살표를 누른다."""
@@ -813,10 +818,20 @@ class Flow:
         log(f"    캐릭터 '{name}' 를 프롬프트에 올림")
 
     def drag(self, source, target):
+        """source 를 target 에 끌어다 놓는다. 둘 다 화면 안에 있어야 한다 (아니면 False).
+        (격자를 내려서 그림을 보이게 하면 맨 위 컬렉션 칸이 화면 밖으로 나가 놓기가 안 되던 문제)"""
         page = self.page
         source.scroll_into_view_if_needed()
         s = source.bounding_box()
         t = target.bounding_box()
+        vh = page.evaluate("innerHeight")
+        off = lambda b: not b or b["y"] < 0 or b["y"] + b["height"] / 2 > vh
+        if off(t):
+            self._scroll_grid(to_top=True)
+            time.sleep(0.8)
+            s, t = source.bounding_box(), target.bounding_box()
+        if off(s) or off(t):
+            return False
         page.mouse.move(s["x"] + s["width"] / 2, s["y"] + s["height"] / 2)
         page.mouse.down()
         steps = 12
@@ -827,6 +842,7 @@ class Flow:
         time.sleep(0.3)
         page.mouse.up()
         time.sleep(1)
+        return True
 
     # -- 컬렉션
     # 눌러서는 안 되는 버튼: 에이전트 창 [닫기 ✕] (누르면 프롬프트 칸이 가운데로 내려가 다음 일이 다 꼬임),
@@ -1186,7 +1202,8 @@ def extract_images(zip_path, dest_dir):
     count = 0
     with zipfile.ZipFile(zip_path) as z:
         for info in z.infolist():
-            name = Path(info.filename).name
+            # 그림 제목에 ':' 같은 글자가 있으면 윈도우 파일 이름으로 못 씀 (예: 'Clock showing 11:45 PM')
+            name = re.sub(r'[\\/:*?"<>|]', "_", info.filename.replace("\\", "/").split("/")[-1]).strip()
             if info.is_dir() or not name.lower().endswith(IMAGE_EXTS):
                 continue
             target = dest_dir / name
@@ -1261,6 +1278,20 @@ def request_images(flow, prompt, n_images, request=IMAGE_REQUEST, characters=(),
 
 
 _dumped = False
+_shots = {}
+
+
+def save_screen(flow, folder, name, limit=6):
+    """문제가 생긴 순간의 Flow 화면을 이미지\\_확인화면 에 저장 (트랙마다 몇 장까지만)."""
+    if _shots.get(folder, 0) >= limit:
+        return
+    _shots[folder] = _shots.get(folder, 0) + 1
+    try:
+        shot_dir = folder.parent / "_확인화면"
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        flow.page.screenshot(path=str(shot_dir / f"{name}.png"))
+    except (PlaywrightError, OSError):
+        pass
 
 
 def dump_tiles(flow, folder):
@@ -1288,6 +1319,16 @@ def collect_images(flow, images, folder):
     use_titles = all(titles) and len(set(titles)) == len(titles)   # 제목이 다 있고 서로 다를 때만 제목으로 찾는다
     if not use_titles:
         images = [dict(img, text="") for img in images]
+    if use_titles and folder.is_dir():
+        # 지난번에 이미 받아 둔 그림(같은 제목의 파일)은 빼고 나머지만 넣는다
+        local = [file_title(f) for f in folder.iterdir() if f.suffix.lower() in IMAGE_EXTS]
+        have = [img for img in images if any(same_title(tile_title(img.get("text")), lt) for lt in local)]
+        if have:
+            images = [img for img in images if img not in have]
+            titles = [tile_title(img.get("text")) for img in images]
+            log(f"    이미 받아 둔 {len(have)}장은 빼고 {len(images)}장만 컬렉션에 넣습니다")
+            if not images:
+                return 0
     track_titles = set(titles) if use_titles else set()
     used_keys, used_titles = set(), set()
     added = 0
@@ -1297,7 +1338,8 @@ def collect_images(flow, images, folder):
     for i, img in enumerate(images, 1):
         done = False
         for attempt in range(4):
-            found = flow.find_image(img, used_keys, used_titles) if attempt == 0 else None
+            found = flow.find_image(img, used_keys, used_titles, top=len(images) + 6) if attempt == 0 else None
+            from_grid = found is None
             if found is None:
                 # 격자 맨 앞(이 트랙 장수만큼) 그림을 차례로. 제목을 알면 이 트랙 제목인 것만
                 flow._scroll_grid(to_top=True)
@@ -1310,10 +1352,14 @@ def collect_images(flow, images, folder):
                 if attempt == 0:
                     log(f"    ({i}번째 이미지를 주소·제목으로 못 찾아서 격자 앞쪽에서 찾습니다)")
                 found = near[pos]
-            flow.drag(flow.tile(found["key"], refresh=True), flow.tile(flow.first_collection()))
+            if not flow.drag(flow.tile(found["key"], refresh=True), flow.tile(flow.first_collection())):
+                log(f"    ({i}번째 이미지와 컬렉션 칸이 한 화면에 안 보여서 다시 해 봅니다)")
+                flow._scroll_grid(to_top=True)
+                time.sleep(1)
+                continue
             # 컬렉션 칸의 숫자가 늘었는지로 정말 들어갔는지 본다 (같은 그림을 또 넣으면 숫자가 그대로)
             now = None
-            for _ in range(6):
+            for _ in range(12):
                 now = flow.collection_count()
                 if now is None or counted is None or now > counted:
                     break
@@ -1327,7 +1373,9 @@ def collect_images(flow, images, folder):
                     pos += 1
                 done = True
                 break
-            pos += 1   # 이미 넣은 그림이었음 → 다음 그림
+            save_screen(flow, folder, f"컬렉션_{folder.name}_{i}번째_{attempt + 1}")
+            if from_grid:
+                pos += 1   # 이미 넣은 그림이었음 → 다음 그림
         if done:
             added += 1
         else:
@@ -1457,7 +1505,8 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         # 영상을 먼저 받는다 (이미지 컬렉션에서 실패해도 영상은 남도록 → 다시 실행할 때 영상을 또 만들지 않음)
         download_video(flow, video, scene_dir, track.number)
 
-    count = collect_images(flow, images, folder)
+    collect_images(flow, images, folder)
+    count = sum(f.suffix.lower() in IMAGE_EXTS for f in folder.iterdir())   # 지난번에 받아 둔 것까지
     if count < len(images):
         log(f"    !! {len(images)}장 중 {count}장만 받았습니다. 다시 실행하면 기록해 둔 이미지로 이 트랙을 다시 받습니다.")
     else:
@@ -1474,17 +1523,18 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
         video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
     log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
     before_video = {t["key"] for t in flow.tiles()}
-    # 이미지를 프롬프트 칸에 올린 것을 확인한 뒤에만 영상을 요청한다 (이미지 없이 영상 요청을 보내지 않게)
+    # 이미지를 프롬프트 칸에 올린 뒤 영상을 요청한다. 올라간 그림 수가 늘었는지도 본다 (셀 수 없는 화면이면 그대로 진행)
     attached_before = flow._prompt_attach_count()
-    for attempt in range(3):
-        found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
-        flow.drag(flow.tile(found["key"]) if found else flow.tile(source["key"], refresh=True), flow.prompt_box())
-        time.sleep(1.5)
-        if flow._prompt_attach_count() > attached_before:
-            break
-        log("    (이미지가 프롬프트 칸에 안 올라가서 다시 끌어다 놓습니다)")
-    else:
-        raise RuntimeError("이미지를 프롬프트 칸에 올리지 못해서 영상 요청을 보내지 않았습니다.")
+    found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
+    if found is None:
+        raise RuntimeError("영상에 쓸 이 트랙 이미지를 Flow 화면에서 찾지 못했습니다.")
+    loc = flow.tile(found["key"])
+    if not flow.drag(loc, flow.prompt_box()):
+        loc.scroll_into_view_if_needed()
+        flow.drag(loc, flow.prompt_box())
+    time.sleep(1.5)
+    if flow._prompt_attach_count() <= attached_before:
+        log("    (이미지가 프롬프트 칸에 올라갔는지 셀 수 없어서 그대로 영상 요청을 보냅니다)")
     refusals_before = flow.refusal_count()
     flow.send_prompt(video_text)
     try:
