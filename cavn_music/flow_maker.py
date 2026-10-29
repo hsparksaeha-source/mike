@@ -233,18 +233,52 @@ class Flow:
         time.sleep(0.5)
         self.page.keyboard.press("Enter")
         time.sleep(2)
-        # Enter 로 안 보내졌으면(글이 그대로 남아 있으면) 오른쪽 화살표 버튼.
+        # Enter 로 안 보내졌으면(글이 그대로 남아 있으면) 프롬프트 칸 오른쪽 아래 구석의 보내기(→) 화살표.
         # 보내면 Flow 가 입력칸을 새로 그리므로, 예전 칸을 기다리지 말고 다시 찾아서 확인한다.
+        # (예전에는 칸의 글을 처음 20자로 비교했는데 줄바꿈이 달라 '안 보내짐' 을 못 알아채고 멈춰 있었다)
+        for attempt in range(4):
+            if not self._prompt_text():
+                return
+            if self._click_send_arrow():
+                log("    Enter 로 안 보내져서 프롬프트 칸의 보내기(→) 화살표를 눌렀습니다.")
+            time.sleep(2.5)
+        if self._prompt_text():
+            log("    !! 프롬프트를 보내지 못했습니다. Flow 프롬프트 칸 오른쪽 아래의 → 화살표를 직접 눌러 주세요.")
+            return
+        # 글이 올라간 뒤에도 Flow 가 멈춰 있을 때가 있다 → 빈 칸의 → 화살표를 한 번 더 누르면 진행된다 (승인 질문이 뜸)
+        time.sleep(3)
+        if self.ask_count() <= self.asks_before and not self._questions() and self._click_send_arrow():
+            log("    프롬프트 칸의 보내기(→) 화살표를 한 번 더 눌렀습니다.")
+
+    def _prompt_text(self):
         try:
-            left = self.prompt_box(wait=5).evaluate(
-                "e => 'value' in e ? e.value : e.innerText", timeout=3000) or ""
+            text = self.prompt_box(wait=5).evaluate("e => 'value' in e ? e.value : e.innerText", timeout=3000) or ""
         except (RuntimeError, PlaywrightError):
-            left = ""
-        if text[:20] in left:
-            send = self.page.locator("button").filter(has_text=re.compile(r"arrow_forward|send|보내기"))
-            send = [b for b in send.all() if b.is_visible()]
-            if send:
-                send[-1].click()
+            return ""
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _click_send_arrow(self):
+        """프롬프트 칸 오른쪽 아래 구석의 보내기(→) 화살표 버튼을 누른다."""
+        try:
+            pb = self.prompt_box(wait=3).bounding_box()
+        except (RuntimeError, PlaywrightError):
+            pb = None
+        cands = []
+        for loc in (self.page.locator("button").filter(has_text=re.compile(r"arrow_forward|arrow_upward|send|보내기")),
+                    self.page.get_by_role("button", name=re.compile(r"보내기|전송|제출|send|submit", re.I))):
+            cands += self._visible_boxes(loc)
+        if not cands:
+            return False
+        if pb:   # 프롬프트 칸 근처(오른쪽 아래)에 있는 것 중 가장 오른쪽 아래
+            near = [(el, b) for el, b in cands
+                    if pb["x"] - 40 < b["x"] < pb["x"] + pb["width"] + 120 and pb["y"] - 40 < b["y"] < pb["y"] + pb["height"] + 120]
+            cands = near or cands
+        el = max(cands, key=lambda eb: (eb[1]["y"] + eb[1]["x"]))[0]
+        try:
+            el.click(timeout=3000)
+        except PlaywrightError:
+            return False
+        return True
 
     # -- 격자
     def tiles(self, kind=None):
@@ -344,21 +378,9 @@ class Flow:
 
     def click_send(self):
         """프롬프트 칸이 비어 있을 때 오른쪽 보내기(→) 화살표를 누른다."""
-        try:
-            left = self.prompt_box(wait=3).evaluate("e => 'value' in e ? e.value : e.innerText", timeout=3000) or ""
-        except (RuntimeError, PlaywrightError):
+        if self._prompt_text():
             return False
-        if left.strip():
-            return False
-        send = self.page.locator("button").filter(has_text=re.compile(r"arrow_forward|send|보내기"))
-        send = [b for b in send.all() if b.is_visible()]
-        if not send:
-            return False
-        try:
-            send[-1].click(timeout=3000)
-        except PlaywrightError:
-            return False
-        return True
+        return self._click_send_arrow()
 
     def _visible_boxes(self, loc):
         out = []
