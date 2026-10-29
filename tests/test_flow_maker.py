@@ -339,3 +339,23 @@ def test_video_only_when_images_already_saved(tmp_path, monkeypatch):
     assert [bool(r["attachment"]) for r in requests] == [False, True, True]   # 두 번째는 영상만
     assert len(list((out / "앨범" / "이미지" / "1번").glob("*.jpg"))) == 15
     assert (out / "앨범" / "장면" / "1.mp4").exists()
+
+
+@pytest.mark.parametrize("extra", ["notitle=1", "notitle=1&vanish=1"])
+def test_collect_without_titles_checks_collection_count(tmp_path, monkeypatch, extra):
+    """그림 제목도 못 읽고 주소도 넣을 때마다 바뀌어도, 컬렉션 칸의 숫자로 확인하며 같은 그림을 두 번 넣지 않는다.
+    (넣은 그림이 격자에서 사라지는 경우도)"""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1&rekey=1&rekeydrag=1&{extra}")
+        flow = flow_maker.Flow(page)
+        old = flow_maker.request_images(flow, "older track", 6)          # 앞 트랙 그림 (섞이면 안 됨)
+        images = flow_maker.request_images(flow, "photorealistic test", 6)
+        count = flow_maker.collect_images(flow, images, tmp_path / "배경")
+        collections = page.evaluate("window.collections")
+        browser.close()
+    assert len(old) == 6 and count == 6
+    assert sorted(collections[0]) == list(range(9, 15))   # 앞 트랙 3~8 은 안 섞이고 새 그림 9~14 만

@@ -129,6 +129,8 @@ function draw() {
   const grid = document.getElementById("grid");
   grid.innerHTML = "";
   items.forEach(item => {
+    // vanish: 컬렉션에 넣은 그림은 격자에서 사라지는 경우
+    if (params.get("vanish") === "1" && item.kind === "image" && items.some(c => c.kind === "collection" && c.members.includes(item.id))) return;
     const t = document.createElement("div");
     t.className = "tile";
     if (item.kind === "collection") {
@@ -147,7 +149,7 @@ function draw() {
       t.querySelector(".redo").onclick = () => { window.gridRetry = (window.gridRetry || 0) + 1; };
     } else if (item.kind === "image") {
       t.draggable = true;
-      t.innerHTML = `<img src="${svg(item.id + (item.rev || 0) * 100000)}" draggable="false"><div class="label">image ${item.label}</div>`;
+      t.innerHTML = `<img src="${svg(item.id + (item.rev || 0) * 100000)}" draggable="false"><div class="label">image ${params.get("notitle") === "1" ? "" : item.label}</div>`;
     } else {
       // 실제처럼 영상 칸 위쪽에 늘 보이는 재생 단추 (눌리면 영상이 움직임)
       t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id + (item.rev || 0) * 100000)}"></video>` +

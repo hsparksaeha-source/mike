@@ -92,13 +92,13 @@ TILES_JS = """(box) => {
         return t;
     };
     const seen = new Set(), out = [];
-    const add = (tile, kind, key) => {
+    const add = (tile, kind, key, extra) => {
         if (seen.has(tile)) return;
         const r = tile.getBoundingClientRect();
         if (r.width < 60 || r.height < 40 || r.left < sideRight || inPrompt(r)) return;
         seen.add(tile);
         tile.setAttribute('data-cavn-tile', key);
-        out.push({kind, key, x: r.left, y: r.top, text: tile.innerText || ''});
+        out.push({kind, key, x: r.left, y: r.top, text: (tile.innerText || '') + (extra ? ' \\n' + extra : '')});
     };
     // 컬렉션: '컬렉션' 글씨가 있는 칸 (썸네일이 없을 수도 있음)
     document.querySelectorAll('*').forEach(e => {
@@ -123,7 +123,8 @@ TILES_JS = """(box) => {
             ? [m.currentSrc || m.src || '', m.poster || '', tile.querySelector('img') ? tile.querySelector('img').src : '']
                 .filter(Boolean).map(norm).join('|')
             : norm(m.currentSrc || m.src || '');
-        add(tile, isVideo ? 'video' : 'image', (isVideo ? 'video:' : 'image:') + src);
+        add(tile, isVideo ? 'video' : 'image', (isVideo ? 'video:' : 'image:') + src,
+            m.alt || m.getAttribute('aria-label') || tile.getAttribute('aria-label') || '');
     });
     out.sort((a, b) => Math.abs(a.y - b.y) > 20 ? a.y - b.y : a.x - b.x);
     return out;
@@ -504,6 +505,7 @@ class Flow:
                 new = [t for t in every if t["kind"] == "video" and t["key"] in top
                        and t["key"] not in before_keys and not t["key"].endswith(":")]
             else:
+                self._scroll_grid(to_top=True)
                 new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
             fails = max(0, self.failed_count() - fails_before)   # Flow 가 못 만든 칸 ('실패 … 수요가 많습니다')
             if len(new) + fails != last_count:
@@ -709,7 +711,9 @@ class Flow:
             row = (px0, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
             drop = []
             play = re.compile(r"play|재생|▶", re.I)
-            for _ in range(8):   # 창이 막 열렸을 때는 왼쪽 위 칸이 늦게 그려질 수 있음
+            for k in range(8):   # 창이 막 열렸을 때는 왼쪽 위 칸이 늦게 그려질 수 있음
+                if k == 3:   # 프롬프트 칸이 가운데로 가 있으면 창 모양이 달라짐 → 검색칸 왼쪽을 더 넓게
+                    row = (min(row[0], sb["x"] - 900), row[1], row[2], row[3])
                 drop = [(e, bx) for e, bx in self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
                         if not play.search((e.text_content() or "") + " " + (e.get_attribute("aria-label") or ""))]
                 if drop:
@@ -802,9 +806,19 @@ class Flow:
         time.sleep(1)
 
     # -- 컬렉션
+    # 눌러서는 안 되는 버튼: 에이전트 창 [닫기 ✕] (누르면 프롬프트 칸이 가운데로 내려가 다음 일이 다 꼬임),
+    # 세션 기록·새 세션, 설정·도움말, 접기, 그림 칸
+    NO_CLICK_RE = re.compile(r"닫기|close|세션|session|기록|history|edit|menu|설정|settings|도움|help|접기|collapse|expand|"
+                             r"keyboard_arrow|more_vert|계정|account", re.I)
+
     def new_collection(self):
         page = self.page
         before = len(self.tiles("collection"))
+        # 왼쪽 '라이브러리' 옆 [+] 가 바로 새 컬렉션을 만든다 → 이것부터
+        item = self._library_plus()
+        if item is not None:
+            log("    [+] 시도: 왼쪽 라이브러리 [+]")
+            return self._finish_collection(item, before)
         # 화면 맨 위 줄, 검색칸 오른쪽에 모인 버튼들(+, ?, ⚙, ⋮, 그 오른쪽의 에이전트 창 버튼들) 중 맨 왼쪽 = [+]
         # (그림만 있고 글자가 없어서 위치로 찾는다. 대화 창 입력칸의 + 와 '새 세션' 버튼은 아님)
         width = page.evaluate("innerWidth")
@@ -822,6 +836,8 @@ class Flow:
                                         timeout=2000)
                 except PlaywrightError:
                     label = ""
+                if self.NO_CLICK_RE.search(label) or len(label) > 12 and not re.search(r"\badd\b|추가|\+", label):
+                    continue
                 top.append((box["x"], label, el))
         # 맨 왼쪽부터 하나씩 눌러 보고 '새 컬렉션' 메뉴가 뜨는 버튼을 쓴다 (아니면 Esc 로 닫고 다음 버튼).
         # 그래도 안 되면 왼쪽 '라이브러리' 옆 [+]. 무엇을 눌렀고 무엇이 떴는지 까만 창에 남긴다.
@@ -838,13 +854,12 @@ class Flow:
                 break
             page.keyboard.press("Escape")
             time.sleep(0.6)
-        if item is None:
-            item = self._library_plus()
-            if item is not None:
-                tried.append("왼쪽 라이브러리 [+]")
         log("    [+] 시도: " + " / ".join(tried or ["화면 맨 위 줄 버튼 없음"]))
         if item is None:
             raise RuntimeError("'새 컬렉션' 메뉴를 찾지 못했습니다.")
+        return self._finish_collection(item, before)
+
+    def _finish_collection(self, item, before):
         if item is not True:   # True = 라이브러리 [+] 가 메뉴 없이 바로 컬렉션을 만든 경우
             item.click()
         for _ in range(20):
@@ -888,6 +903,13 @@ class Flow:
         before = len(self.tiles("collection"))
         for el, box in self._visible_boxes(page.locator("button, [role=button]")):
             if abs(box["y"] + box["height"] / 2 - cy) < 20 and box["x"] > lab["x"] + lab["width"] and box["x"] < lab["x"] + 400:
+                try:
+                    label = el.evaluate("e => ((e.getAttribute('aria-label') || '') + ' ' + (e.innerText || '')).trim()",
+                                        timeout=2000)
+                except PlaywrightError:
+                    label = ""
+                if self.NO_CLICK_RE.search(label):   # 라이브러리 접기(^) 는 누르지 않는다
+                    continue
                 try:
                     el.click(timeout=3000)
                 except PlaywrightError:
@@ -937,6 +959,14 @@ class Flow:
         dl.save_as(dest)
         page.keyboard.press("Escape")
         return dest
+
+    def collection_count(self):
+        """새 컬렉션 칸에 적힌 그림 수 ('제목 없는 컬렉션 9' → 9, 비어 있으면 0). 못 읽으면 None."""
+        cols = self.tiles("collection")
+        if not cols:
+            return None
+        nums = re.findall(r"\d+", cols[0]["text"].replace("컬렉션", " "))
+        return int(nums[-1]) if nums else 0
 
     def first_collection(self):
         cols = self.tiles("collection")
@@ -1186,6 +1216,9 @@ def track_done(image_folder, scene_dir, number, n_images):
 def request_images(flow, prompt, n_images, request=IMAGE_REQUEST, characters=(), project=None):
     """에이전트에 프롬프트 + 'N장 만들어 줘'를 보내고 새 이미지 N장이 생길 때까지 기다린다.
     characters 가 있으면 먼저 [+] 로 그 캐릭터들을 프롬프트 칸에 올린다."""
+    # 새 그림은 격자 맨 위에 생긴다. 격자가 내려가 있으면 맨 위 그림을 '새 그림' 으로 잘못 센다 (새 이미지 50개 문제)
+    flow._scroll_grid(to_top=True)
+    time.sleep(1)
     before = {t["key"] for t in flow.tiles()}
     for name in characters:
         flow.add_character(name, project)
@@ -1204,6 +1237,23 @@ def request_images(flow, prompt, n_images, request=IMAGE_REQUEST, characters=(),
     return images
 
 
+_dumped = False
+
+
+def dump_tiles(flow, folder):
+    """실제 Flow 화면의 격자 칸 구조를 파일로 한 번 남긴다 (그림을 못 찾는 문제를 고칠 때 보려고)."""
+    global _dumped
+    if _dumped:
+        return
+    _dumped = True
+    try:
+        html = flow.page.evaluate("""() => [...document.querySelectorAll('[data-cavn-tile]')].slice(0, 4)
+            .map(e => e.getAttribute('data-cavn-tile').slice(0, 150) + '\\n' + e.outerHTML.slice(0, 5000)).join('\\n\\n=====\\n\\n')""")
+        (folder.parent / "Flow칸정보.txt").write_text(html, encoding="utf-8")
+    except (PlaywrightError, OSError):
+        pass
+
+
 def collect_images(flow, images, folder):
     """새 컬렉션에 이미지를 넣고 컬렉션 다운로드 → folder 에 이미지 저장. 받은 장수를 돌려준다."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -1211,28 +1261,54 @@ def collect_images(flow, images, folder):
     flow.new_collection()
     # 그림 주소는 만든 뒤에 바뀔 수 있어서, 주소로 못 찾으면 그림 제목(Flow 가 붙인 이름)으로 찾는다.
     # 예전처럼 '격자 몇 번째' 로 찾으면 다른 트랙 그림을 넣거나 같은 그림을 두 번 넣어 몇 장씩 모자랐다.
-    track_titles = {tile_title(img.get("text")) for img in images} - {""}
+    titles = [tile_title(img.get("text")) for img in images]
+    use_titles = all(titles) and len(set(titles)) == len(titles)   # 제목이 다 있고 서로 다를 때만 제목으로 찾는다
+    if not use_titles:
+        images = [dict(img, text="") for img in images]
+    track_titles = set(titles) if use_titles else set()
     used_keys, used_titles = set(), set()
     added = 0
+    pos = 0   # 제목도 모를 때: 격자 맨 앞에서 몇 번째 그림을 넣어 볼 차례인지
+    counted = flow.collection_count()
+    dump_tiles(flow, folder)
     for i, img in enumerate(images, 1):
-        found = flow.find_image(img, used_keys, used_titles)
-        if found is None:
-            # 제목도 모르면: 격자 맨 앞쪽(이 트랙 장수만큼)의 아직 안 넣은 이미지. 제목을 알면 이 트랙 제목인 것만
-            flow._scroll_grid(to_top=True)
-            time.sleep(1)
-            near = flow.tiles("image")[:len(images) + 3]
-            near = [t for t in near if t["key"] not in used_keys and tile_title(t["text"]) not in used_titles
-                    and (not track_titles or tile_title(t["text"]) in track_titles)]
-            if not near:
-                log(f"    !! {i}번째 이미지를 Flow 화면에서 찾지 못해 건너뜁니다")
-                continue
-            log(f"    ({i}번째 이미지를 주소·제목으로 못 찾아서 격자 앞쪽에서 찾습니다)")
-            found = near[0]
-        used_keys.add(found["key"])
-        if tile_title(found["text"]):
-            used_titles.add(tile_title(found["text"]))
-        flow.drag(flow.tile(found["key"], refresh=True), flow.tile(flow.first_collection()))
-        added += 1
+        done = False
+        for attempt in range(4):
+            found = flow.find_image(img, used_keys, used_titles) if attempt == 0 else None
+            if found is None:
+                # 격자 맨 앞(이 트랙 장수만큼) 그림을 차례로. 제목을 알면 이 트랙 제목인 것만
+                flow._scroll_grid(to_top=True)
+                time.sleep(1)
+                near = [t for t in flow.tiles("image")[:len(images) + 2]
+                        if not (track_titles and tile_title(t["text"]) not in track_titles)
+                        and tile_title(t["text"]) not in used_titles]
+                if pos >= len(near):
+                    break
+                if attempt == 0:
+                    log(f"    ({i}번째 이미지를 주소·제목으로 못 찾아서 격자 앞쪽에서 찾습니다)")
+                found = near[pos]
+            flow.drag(flow.tile(found["key"], refresh=True), flow.tile(flow.first_collection()))
+            # 컬렉션 칸의 숫자가 늘었는지로 정말 들어갔는지 본다 (같은 그림을 또 넣으면 숫자가 그대로)
+            now = None
+            for _ in range(6):
+                now = flow.collection_count()
+                if now is None or counted is None or now > counted:
+                    break
+                time.sleep(0.5)
+            if now is None or counted is None or now > counted:
+                counted = now
+                used_keys.add(found["key"])
+                if use_titles and tile_title(found["text"]):
+                    used_titles.add(tile_title(found["text"]))
+                if counted is None:
+                    pos += 1
+                done = True
+                break
+            pos += 1   # 이미 넣은 그림이었음 → 다음 그림
+        if done:
+            added += 1
+        else:
+            log(f"    !! {i}번째 이미지를 Flow 화면에서 찾지 못해 건너뜁니다")
         if i % 5 == 0:
             log(f"    {i}/{len(images)}장 넣음")
     if not added:
@@ -1240,7 +1316,7 @@ def collect_images(flow, images, folder):
 
     log("  컬렉션 다운로드")
     count = 0
-    for path in flow.download_collection(flow.first_collection(), folder, len(images)):
+    for path in flow.download_collection(flow.first_collection(), folder, counted or added):
         if path.suffix.lower() == ".zip":
             count += extract_images(path, folder)
             path.unlink()
