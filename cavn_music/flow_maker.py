@@ -525,6 +525,21 @@ class Flow:
             }).length;
         }""", pb)
 
+    def _picker_rect(self):
+        """애셋 고르기 창 전체의 상자 (검색칸에서 위로 올라가며 충분히 큰 상자). 못 찾으면 None."""
+        boxes = self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I)))
+        if not boxes:
+            return None
+        return boxes[0][0].evaluate("""e => {
+            let p = e;
+            for (let i = 0; i < 15 && p.parentElement; i++) {
+                p = p.parentElement;
+                const r = p.getBoundingClientRect();
+                if (r.width >= 450 && r.height >= 250) return {x: r.left, y: r.top, width: r.width, height: r.height};
+            }
+            return null;
+        }""")
+
     def _picker_open(self):
         return bool(self._boxes(self.page.get_by_placeholder(re.compile("애셋 검색|Search assets", re.I))))
 
@@ -544,15 +559,17 @@ class Flow:
     def _add_character_once(self, name, project):
         attached_before = self._prompt_attach_count()
         sb = self._open_asset_picker()
-        big = 10_000
-        left_col = (sb["x"] - 400, sb["x"] - 5, sb["y"] + sb["height"], big)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
-        below = (sb["x"] - 400, big, sb["y"] + sb["height"], big)               # 창 안쪽 (검색칸 아래)
+        # 고르기 창 안만 본다 (창 밖 격자의 영상 ▶ 단추를 프로젝트 칸으로 잘못 누르던 문제)
+        pr = self._picker_rect() or {"x": sb["x"] - 400, "y": sb["y"] - 40, "width": 10_000, "height": 10_000}
+        px0, px1, py1 = pr["x"] - 2, pr["x"] + pr["width"] + 2, pr["y"] + pr["height"] + 2
+        left_col = (px0, sb["x"] - 5, sb["y"] + sb["height"], py1)     # 왼쪽 종류 칸 (전체·이미지·…·캐릭터)
+        below = (px0, px1, sb["y"] + sb["height"], py1 + 600)          # 창 안쪽 (검색칸 아래, 펼친 목록 포함)
         # 1) 왼쪽 '캐릭터'
         if not self._click_text_in("캐릭터", left_col):
             raise RuntimeError("애셋 고르기 창에서 '캐릭터'를 찾지 못했습니다.")
         # 2) 왼쪽 위 프로젝트 고르기 → '캐릭터목록'
-        if not self._boxes(self.page.get_by_text(name, exact=True), (sb["x"] - 10, big, sb["y"], big)):
-            row = (sb["x"] - 400, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
+        if not self._boxes(self.page.get_by_text(name, exact=True), (sb["x"] - 10, px1, sb["y"], py1)):
+            row = (px0, sb["x"] - 5, sb["y"] - 15, sb["y"] + sb["height"] + 15)
             drop = []
             for _ in range(8):   # 창이 막 열렸을 때는 왼쪽 위 칸이 늦게 그려질 수 있음
                 drop = self._boxes(self.page.locator("button, [role=button], [role=combobox]"), row)
@@ -591,7 +608,7 @@ class Flow:
         if search:
             search[0][0].fill(name)
             time.sleep(1.5)
-        list_area = (sb["x"] - 10, sb["x"] + sb["width"] * 0.6, sb["y"] + sb["height"], big)
+        list_area = (sb["x"] - 10, sb["x"] + sb["width"] * 0.6, sb["y"] + sb["height"], py1)
         for _ in range(15):
             if self._click_text_in(name, list_area):
                 break

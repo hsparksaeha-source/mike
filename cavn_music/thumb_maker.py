@@ -478,6 +478,23 @@ def reuse_track_images(thumb, tracks, album_dir, bg_dir):
                     shutil.copy2(p, bg_dir / p.name)
                 log(f"  {t.number}번 곡 이미지와 프롬프트가 같아서 그 이미지를 씁니다 (크레딧 안 씀)")
                 return True
+    if thumb.prompt:
+        return False
+    # 이미지 프롬프트가 없는 md (가요·칸쏘네 일부): 싱글은 같은 제목 곡의 이미지, 메인은 1번 곡 이미지를 배경으로
+    pick = None
+    if thumb.title:
+        key = _norm(thumb.title)
+        pick = next((t for t in tracks if _norm(t.title) == key or key in _norm(t.title) or _norm(t.title) in key), None)
+    if pick is None and thumb.name == "메인" and tracks:
+        pick = tracks[0]
+    if pick is not None:
+        src = backgrounds(album_dir / "이미지" / f"{pick.number}번")
+        if src:
+            bg_dir.mkdir(parents=True, exist_ok=True)
+            for p in src[:BG_IMAGES]:
+                shutil.copy2(p, bg_dir / p.name)
+            log(f"  이미지 프롬프트가 없어서 {pick.number}번 곡 이미지를 배경으로 씁니다 (크레딧 안 씀)")
+            return True
     return False
 
 
@@ -506,13 +523,14 @@ def run(md_path, out_root, use_flow=True, capcut_dir=None, page=None, confirm=Tr
             print(f"      {o.label}: {' / '.join(o.lines)}")
         if t.english:
             print(f"      (왼쪽 위) {' / '.join(t.english)}")
-        if not have and t.prompt:
+        if not have:
             todo_bg.append(t)
     if confirm and input("\n시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
         return []
 
     # 1. 배경 그림
-    need_flow = [t for t in todo_bg if not reuse_track_images(t, tracks, album_dir, out_dir / "배경" / t.name)]
+    need_flow = [t for t in todo_bg if not reuse_track_images(t, tracks, album_dir, out_dir / "배경" / t.name)
+                 and t.prompt]
     if need_flow and use_flow:
         import flow_maker
 

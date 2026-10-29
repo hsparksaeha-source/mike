@@ -195,7 +195,9 @@ def test_pop_tracks_with_characters(tmp_path, monkeypatch):
         flow_maker.run(md, tmp_path / "out", page=page, confirm=False, n_images=15,
                        cast_group="칸쏘네", cast={2: ["안나", "브루노"]})
         requests = page.evaluate("window.requests")
+        played = page.evaluate("window.videoPlayed || 0")
         browser.close()
+    assert played == 0          # 캐릭터 창 밖 격자의 영상 재생 단추는 누르지 않음
     images = [r for r in requests if not r["attachment"]]
     videos = [r for r in requests if r["attachment"]]
     assert [r["chars"] for r in images] == [["마태오"], ["안나", "브루노"]]

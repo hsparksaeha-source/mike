@@ -146,11 +146,15 @@ function draw() {
       t.draggable = true;
       t.innerHTML = `<img src="${svg(item.id + (item.rev || 0) * 100000)}" draggable="false"><div class="label">image ${item.label}</div>`;
     } else {
+      // 실제처럼 영상 칸 위쪽에 늘 보이는 재생 단추 (눌리면 영상이 움직임)
       t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id)}"></video>` +
+                    `<button class="playbtn" style="position:absolute;left:8px;top:8px">play_arrow</button>` +
                     `<div class="label">play_circle ${item.label}</div>`;
     }
     t.innerHTML += `<div class="acts"><button>favorite</button><button class="more">more_vert</button></div>`;
     t.addEventListener("dragstart", () => dragging = item);
+    const pb = t.querySelector(".playbtn");
+    if (pb) pb.onclick = () => { window.videoPlayed = (window.videoPlayed || 0) + 1; };
     t.querySelector(".more").onclick = e => openMenu(item, e.target);
     grid.appendChild(t);
   });

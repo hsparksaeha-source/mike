@@ -186,3 +186,19 @@ def test_run_makes_jpg_and_capcut(tmp_path):
 def test_runs_split_by_script():
     assert thumb_maker.runs("2장 · 사랑 10곡") == [("2", False), ("장 · 사랑 ", True), ("10", False), ("곡", True)]
     assert thumb_maker.runs("Gettone · Jeton") == [("Gettone · Jeton", False)]
+
+
+def test_background_from_track_images_when_no_prompt(tmp_path):
+    """썸네일 이미지 프롬프트가 없는 md: 싱글은 같은 제목 곡의 이미지, 메인은 1번 곡 이미지를 배경으로."""
+    from md_parser import Track
+    tracks = [Track(1, "하얀 숨결"), Track(2, "첫눈")]
+    album = tmp_path / "앨범"
+    for n in (1, 2):
+        (album / "이미지" / f"{n}번").mkdir(parents=True)
+        Image.new("RGB", (100, 60)).save(album / "이미지" / f"{n}번" / f"img{n}.jpg")
+    single = thumb_maker.Thumb("싱글2", title="첫눈")
+    main = thumb_maker.Thumb("메인")
+    assert thumb_maker.reuse_track_images(single, tracks, album, tmp_path / "배경" / "싱글2")
+    assert thumb_maker.reuse_track_images(main, tracks, album, tmp_path / "배경" / "메인")
+    assert [p.name for p in (tmp_path / "배경" / "싱글2").iterdir()] == ["img2.jpg"]
+    assert [p.name for p in (tmp_path / "배경" / "메인").iterdir()] == ["img1.jpg"]
