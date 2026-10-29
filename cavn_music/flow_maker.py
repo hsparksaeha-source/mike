@@ -136,6 +136,13 @@ ICON_WORDS = re.compile(r"\b(image|photo|play_circle|play_arrow|videocam|movie|f
                         r"more_horiz|download|file_download|check|check_box|check_box_outline_blank|close|warning|refresh)\b")
 
 
+def caption(text):
+    """격자 칸 글씨에서 사람이 읽는 그림 제목 (예: 'image\nSora reflecting at cafe table' → 'Sora reflecting at cafe table')."""
+    lines = [re.sub(r"\s+", " ", ICON_WORDS.sub(" ", ln)).strip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if len(ln) >= 4 and not ln.startswith("제목 없")]
+    return lines[0][:80] if lines else ""
+
+
 def norm_title(text):
     return re.sub(r"[^0-9a-z가-힣]+", " ", (text or "").lower()).strip()
 
@@ -466,6 +473,20 @@ class Flow:
         }).length;
     }"""
 
+    NEED_IMAGE_JS = """() => [...document.querySelectorAll('p, div, span')].filter(e => {
+        const own = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').trim();
+        const r = e.getBoundingClientRect();
+        return own.length > 6 && /이미지를 (선택|첨부|올려|알려)|첨부해 주|어떤 이미지|which image|select an image|attach an image/i.test(own)
+            && r.width > 0 && r.height > 0;
+    }).length"""
+
+    def need_image_count(self):
+        """대화 창의 '영상에 쓸 이미지를 선택(첨부)해 주세요' 같은 답 수."""
+        try:
+            return self.page.evaluate(self.NEED_IMAGE_JS)
+        except PlaywrightError:
+            return 0
+
     ASK_JS = """() => [...document.querySelectorAll('p, div, span')].filter(e => {
         const own = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').trim();
         const r = e.getBoundingClientRect();
@@ -486,7 +507,8 @@ class Flow:
         except PlaywrightError:
             return 0
 
-    def wait_new(self, kind, before_keys, want, timeout, settle=10, after_approval=False, refusals_before=None):
+    def wait_new(self, kind, before_keys, want, timeout, settle=10, after_approval=False, refusals_before=None,
+                 on_need_image=None, need_before=None):
         """kind 칸이 want 개 이상 새로 생기고 settle 초 동안 늘지 않을 때까지 기다린다.
         after_approval: 확인 질문이 뜨면 승인된 뒤에 생긴 것만 센다 (그 사이 끝난 다른 트랙 영상을 잘못 세지 않게).
         질문이 90초 안에 안 뜨면(이미 '항상 승인'인 경우) 그냥 센다."""
@@ -498,8 +520,18 @@ class Flow:
         send_tries = [40, 150]   # [승인] 칸이 안 보이면 이 초에 보내기(→) 화살표를 눌러 본다
         if refusals_before is None:   # 보내기 전에 센 값을 받는 게 정확함 (거절이 바로 뜰 수도 있어서)
             refusals_before = self.refusal_count() if kind == "video" else 0
+        if need_before is None:   # 보내기 전에 센 값을 받는 게 정확함 (답이 바로 올 수도 있어서)
+            need_before = self.need_image_count() if on_need_image else 0
         while time.time() < deadline:
             self.click_retry()
+            if on_need_image and self.need_image_count() > need_before:
+                # 에이전트가 '어떤 이미지로 만들지 선택해 주세요' 하고 멈춤 → 이미지를 다시 올리고 제목을 적어 다시 보낸다
+                log("  에이전트가 영상에 쓸 이미지를 물어서, 이미지를 다시 올리고 제목을 적어 보냅니다")
+                need_before = self.need_image_count()
+                on_need_image()
+                on_need_image = None
+                start = time.time()
+                continue
             if kind == "video" and self.refusal_count() > refusals_before:
                 raise VideoRefused("Flow 가 영상을 만들 수 없다고 했습니다 (정책 위반·유명인과 닮음 등).")
             was_approved = self.approved
@@ -1523,23 +1555,31 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
         video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
     log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
     before_video = {t["key"] for t in flow.tiles()}
-    # 이미지를 프롬프트 칸에 올린 뒤 영상을 요청한다. 올라간 그림 수가 늘었는지도 본다 (셀 수 없는 화면이면 그대로 진행)
-    attached_before = flow._prompt_attach_count()
     found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
     if found is None:
         raise RuntimeError("영상에 쓸 이 트랙 이미지를 Flow 화면에서 찾지 못했습니다.")
-    loc = flow.tile(found["key"])
-    if not flow.drag(loc, flow.prompt_box()):
-        loc.scroll_into_view_if_needed()
-        flow.drag(loc, flow.prompt_box())
-    time.sleep(1.5)
-    if flow._prompt_attach_count() <= attached_before:
-        log("    (이미지가 프롬프트 칸에 올라갔는지 셀 수 없어서 그대로 영상 요청을 보냅니다)")
-    refusals_before = flow.refusal_count()
+    name = caption(found["text"]) or caption(source.get("text"))
+    if name:   # 끌어다 놓기가 안 되어도 에이전트가 알 수 있게 그림 제목도 적는다
+        video_text += f"\n(사용할 이미지: '{name}')"
+
+    def attach():
+        f = flow.find_image(source) or found
+        loc = flow.tile(f["key"], refresh=True)
+        if not flow.drag(loc, flow.prompt_box()):
+            loc.scroll_into_view_if_needed()
+            flow.drag(loc, flow.prompt_box())
+        time.sleep(1.5)
+
+    def answer():
+        attach()
+        flow.send_prompt(f"'{name}' 이미지로 영상을 만들어 주세요." if name else LYRIC_VIDEO_REQUEST)
+
+    attach()
+    refusals_before, need_before = flow.refusal_count(), flow.need_image_count()
     flow.send_prompt(video_text)
     try:
         video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True,
-                              refusals_before=refusals_before)[0]
+                              refusals_before=refusals_before, on_need_image=answer, need_before=need_before)[0]
         log("  영상 완성")
     except VideoRefused as e:
         # 영상은 싱글곡에만 따로 쓰는 것이라, 거절되면 영상 없이 이미지만 받고 넘어간다

@@ -177,6 +177,7 @@ wrap.addEventListener("dragover", e => e.preventDefault());
 wrap.addEventListener("drop", e => {
   e.preventDefault();
   if (dragging && dragging.kind === "image") {
+    if (params.get("noattach") === "1" && !window.dropIgnored) { window.dropIgnored = true; return; }   // 처음 끌어다 놓기는 안 됨
     attachment = dragging;
     document.getElementById("attach").innerHTML = `<img src="${svg(dragging.id)}">`;
   }
@@ -215,6 +216,11 @@ function submit() {
   const att = attachment;
   attachment = null; document.getElementById("attach").innerHTML = "";
   const m = text.match(/(\d+)장/);
+  if (!att && !m && /영상/.test(text)) {   // 이미지 없이 영상을 부탁하면 에이전트가 이미지를 물어봄
+    chat.insertAdjacentHTML("beforeend", "<p>영상을 생성하기 위해 기반으로 사용할 이미지를 선택해 주세요.</p>");
+    window.askedImage = (window.askedImage || 0) + 1;
+    return;
+  }
   if (att && params.get("videorefuse") === "1") {   // 유명인과 닮았다며 영상을 거절하는 경우
     chat.insertAdjacentHTML("beforeend", "<p>죄송합니다. 이 이미지는 실존 인물과 닮아 Google 정책상 동영상을 생성할 수 없습니다.</p>");
   } else if (att) {

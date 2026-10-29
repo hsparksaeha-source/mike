@@ -359,3 +359,24 @@ def test_collect_without_titles_checks_collection_count(tmp_path, monkeypatch, e
         browser.close()
     assert len(old) == 6 and count == 6
     assert sorted(collections[0]) == list(range(9, 15))   # 앞 트랙 3~8 은 안 섞이고 새 그림 9~14 만
+
+
+def test_video_when_first_drop_fails(tmp_path, monkeypatch):
+    """이미지를 끌어다 놓기가 안 돼서 에이전트가 '사용할 이미지를 선택해 주세요' 하면,
+    이미지를 다시 올리고 제목을 적어 다시 보낸다 (영상 대기에서 멈추지 않음)."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    from md_parser import parse_md
+    [track] = parse_md(EASY_MD)
+    folder, scenes = tmp_path / "이미지" / "1번", tmp_path / "장면"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1&noattach=1")
+        flow_maker.make_track(flow_maker.Flow(page), track, folder, scenes, 15)
+        asked = page.evaluate("window.askedImage || 0")
+        requests = page.evaluate("window.requests")
+        browser.close()
+    assert asked == 1
+    assert "사용할 이미지: 'Frozen lake 3'" in requests[1]["text"]
+    assert (scenes / "1.mp4").exists() and len(list(folder.glob("*.jpg"))) == 15
