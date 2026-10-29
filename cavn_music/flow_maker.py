@@ -1473,10 +1473,6 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
     folder.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
-    # 지난번에 이 트랙의 이미지·영상을 Flow 에 만들어 놓고 받기에서 실패했으면, 기록해 둔 그 칸을 찾아 다시 쓴다
-    state = load_state(folder)
-    saved_images = [{"key": k, "text": tx} for k, tx in
-                    zip(state.get("images") or [], (state.get("titles") or []) + [""] * len(state.get("images") or []))]
     local = [f for f in folder.iterdir() if f.suffix.lower() in IMAGE_EXTS]
     if not reuse and ((folder / DONE_NAME).exists() or len(local) >= n_images):
         # 이미지는 다 받아 두었고 영상만 없음 → 받아 둔 그림과 같은 제목의 그림을 Flow 에서 찾아 영상만 만든다
@@ -1487,18 +1483,20 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
             raise RuntimeError("받아 둔 이 트랙 그림을 Flow 화면에서 찾지 못해 영상을 만들 수 없습니다.")
         make_video(flow, track, folder, scene_dir, tile, cast)
         return
-    if (not reuse and len(saved_images) >= n_images and flow.find_image(saved_images[-1])
-            and flow.find_image(saved_images[0])):
-        log(f"  지난번에 Flow 에 만들어 둔 이 트랙 이미지 {len(saved_images)}장을 다시 씁니다 (새로 만들지 않음)")
-        images = saved_images[:n_images]
-        reuse = "state"
-        if state.get("video") and flow.has_tile(state["video"]):
-            log("  지난번에 만들어 둔 이 트랙 영상도 다시 씁니다 (새로 만들지 않음)")
-            reuse_video = "state"
+    # 지난번에 만들다 만 트랙은 처음 순서 그대로 다시 만든다 (제목·가사 → 이미지 15장 → 첫 이미지로 영상).
+    # Flow 에 남은 예전 그림을 찾아 다시 쓰려다 엉뚱한 그림을 쓰거나 이미지 없이 영상을 부탁하던 문제가 있어서.
+    # 덜 받은 예전 그림은 지우지 않고 앨범 폴더의 '_이전그림\N번' 으로 옮겨 둔다.
+    if local and not reuse:
+        old_dir = folder.parent.parent / "_이전그림" / folder.name
+        old_dir.mkdir(parents=True, exist_ok=True)
+        for f in local:
+            target = old_dir / f.name
+            if not target.exists():
+                shutil.move(str(f), str(target))
+        log(f"  지난번에 덜 받은 그림 {len(local)}장은 '_이전그림\\{folder.name}' 으로 옮기고 처음부터 다시 만듭니다")
+    (folder / STATE_NAME).unlink(missing_ok=True)
 
-    if reuse == "state":
-        pass
-    elif reuse:
+    if reuse:
         # 이 트랙 이미지가 이미 Flow 화면 맨 앞에 있음 → 새로 만들지 않고 그 이미지를 쓴다
         images = flow.tiles("image")[:n_images]
         if len(images) < n_images:
@@ -1520,8 +1518,6 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
     elif have_video:
         log(f"  영상은 이미 받아 두었습니다 (장면\\{video_path(scene_dir, track.number).name}) → 영상은 건너뜀")
         video = None
-    elif reuse_video == "state":
-        video = {"key": state["video"]}
     elif reuse_video:
         # 이 트랙 영상도 이미 만들어 둠 → 격자 맨 앞의 영상을 쓴다 (크레딧 안 씀)
         videos = flow.tiles("video")

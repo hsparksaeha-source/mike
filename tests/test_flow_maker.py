@@ -125,9 +125,9 @@ def test_image_folder_names(tmp_path):
     assert (tmp_path / "3번" / "a.jpg").exists() and not (tmp_path / "3").exists()
 
 
-def test_rerun_after_failure_reuses_made_images_and_video(tmp_path, monkeypatch):
-    """이미지·영상을 다 만든 뒤 컬렉션에서 실패해도, 다시 실행하면 새로 만들지 않고 그것을 받는다.
-    (실패한 트랙을 다시 돌릴 때마다 이미지·영상이 또 만들어져 크레딧이 들던 문제)"""
+def test_rerun_after_failure_makes_track_again_in_order(tmp_path, monkeypatch):
+    """컬렉션에서 실패한 트랙을 다시 돌리면, Flow 에 남은 예전 그림을 찾지 않고 처음 순서대로 다시 만든다
+    (이미지 요청 → 영상 요청). 영상은 이미 받아 두었으면 건너뛴다. 덜 받은 예전 그림은 _이전그림 으로."""
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
     from md_parser import parse_md
     [track] = parse_md(EASY_MD)
@@ -140,7 +140,8 @@ def test_rerun_after_failure_reuses_made_images_and_video(tmp_path, monkeypatch)
         page.goto(f"{MOCK}?delay=300")
         flow = flow_maker.Flow(page)
 
-        def broken(*a, **k):
+        def broken(flow_, images, folder_):
+            (folder_ / "half_done_abcdef12.jpg").write_bytes(b"x")   # 몇 장만 받고 실패한 경우
             raise RuntimeError("컬렉션 실패")
         monkeypatch.setattr(flow_maker, "collect_images", broken)
         with pytest.raises(RuntimeError):
@@ -150,8 +151,9 @@ def test_rerun_after_failure_reuses_made_images_and_video(tmp_path, monkeypatch)
         flow_maker.make_track(flow, track, folder, scenes, 15)       # 다시 실행
         requests = page.evaluate("window.requests")
         browser.close()
-    assert [bool(r["attachment"]) for r in requests] == [False, True]   # 이미지·영상 요청은 처음 한 번씩뿐
+    assert [bool(r["attachment"]) for r in requests] == [False, True, False]   # 다시 실행 때는 이미지만 (영상은 있음)
     assert len([p for p in folder.iterdir() if p.suffix == ".jpg"]) == 15
+    assert (tmp_path / "_이전그림" / "1번" / "half_done_abcdef12.jpg").exists()
     assert not (folder / flow_maker.STATE_NAME).exists()
 
 
