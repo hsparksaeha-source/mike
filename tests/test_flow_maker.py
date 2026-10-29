@@ -60,7 +60,7 @@ def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
     # 새 컬렉션 2개 (새 것이 앞), 각각 그 트랙의 이미지 15장, 처음 있던 컬렉션은 그대로
     assert sorted(collections[1]) == list(range(3, 18))
     assert len(collections[0]) == 15 and collections[2] == [1]
-    assert (folder1 / "image_3.jpg").read_bytes().endswith(b"image 3")
+    assert (folder1 / "Frozen_lake_3_abc003.jpg").read_bytes().endswith(b"image 3")   # 실제처럼 '제목_번호.jpg'
     assert (album / "장면" / "1.mp4").read_bytes()[4:8] == b"ftyp"   # 진짜 영상 파일
 
     # 다시 실행하면 이미 끝난 트랙은 건너뜀
@@ -286,3 +286,56 @@ def test_add_character_search_in_wrapper_and_picker_stays_open():
         browser.close()
     assert chars == ["소라", "서준"]
     assert not still_open
+
+
+def test_two_tracks_when_addresses_keep_changing(tmp_path, monkeypatch):
+    """그림 주소가 만든 뒤에도, 컬렉션에 넣을 때마다 바뀌고, 예전 영상 주소도 바뀌고, [승인] 칸이 안 보여도:
+    - 이미지는 제목으로 찾아 트랙마다 자기 그림 15장만 넣는다 (다른 트랙 그림·같은 그림 두 번 없음)
+    - 예전 영상을 새 영상으로 착각하지 않는다 (7번에 3번 영상이 들어가던 문제)
+    - [승인] 칸이 안 보이면 보내기(→) 화살표로 승인한다"""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    md = tmp_path / "앨범.md"
+    md.write_text(TWO_TRACKS, encoding="utf-8")
+    out = tmp_path / "out"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1&rekey=1&rekeydrag=1&videorekey=1&hideapprove=1")
+        flow_maker.run(md, out, page=page, confirm=False, n_images=15)
+        collections = page.evaluate("window.collections")
+        send_ok = page.evaluate("window.sendApproved || false")
+        videos = page.evaluate("items.filter(i => i.kind === 'video').map(i => i.id)")
+        browser.close()
+    assert send_ok
+    track2, track1 = collections[0], collections[1]
+    assert len(set(track1)) == 15 and len(set(track2)) == 15
+    assert max(track1) < min(track2)          # 트랙 1 그림은 트랙 1 컬렉션에만
+    album = out / "앨범"
+    for n in (1, 2):
+        assert len(list((album / "이미지" / f"{n}번").glob("*.jpg"))) == 15
+    v1 = (album / "장면" / "1.mp4").read_bytes()
+    v2 = (album / "장면" / "2.mp4").read_bytes()
+    assert v1 != v2 and v2.endswith(f"video {max(videos)}".encode())
+
+
+def test_video_only_when_images_already_saved(tmp_path, monkeypatch):
+    """이미지는 다 받아 두었는데 영상만 없으면(지운 경우 등) 이미지를 또 만들지 않고, 받아 둔 그림과 같은 제목의
+    Flow 그림으로 영상만 만든다."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    md = tmp_path / "앨범.md"
+    md.write_text(EASY_MD, encoding="utf-8")
+    out = tmp_path / "out"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1")
+        flow_maker.run(md, out, page=page, confirm=False, n_images=15)
+        (out / "앨범" / "장면" / "1.mp4").unlink()
+        flow_maker.run(md, out, page=page, confirm=False, n_images=15)
+        requests = page.evaluate("window.requests")
+        browser.close()
+    assert [bool(r["attachment"]) for r in requests] == [False, True, True]   # 두 번째는 영상만
+    assert len(list((out / "앨범" / "이미지" / "1번").glob("*.jpg"))) == 15
+    assert (out / "앨범" / "장면" / "1.mp4").exists()

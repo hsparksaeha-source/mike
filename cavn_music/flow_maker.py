@@ -20,6 +20,7 @@ md 파일의 트랙마다 (트랙 번호 N):
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
@@ -129,6 +130,34 @@ TILES_JS = """(box) => {
 }"""
 
 
+ICON_WORDS = re.compile(r"\b(image|photo|play_circle|play_arrow|videocam|movie|favorite|favorite_border|more_vert|"
+                        r"more_horiz|download|file_download|check|check_box|check_box_outline_blank|close|warning|refresh)\b")
+
+
+def norm_title(text):
+    return re.sub(r"[^0-9a-z가-힣]+", " ", (text or "").lower()).strip()
+
+
+def tile_title(text):
+    """격자 칸 글씨에서 그림 제목만 (예: 'image Sora walking into room' → 'sora walking into room').
+    Flow 는 그림마다 제목을 붙이고, 내려받은 파일 이름도 그 제목이다. 그림 주소가 바뀌어도 제목은 그대로다."""
+    t = norm_title(ICON_WORDS.sub(" ", text or ""))
+    return t if len(t) >= 4 and not t.startswith("제목 없") else ""
+
+
+def file_title(path):
+    """내려받은 이미지 파일 이름 → 제목 (예: Sora_holding_mug_529db99e.jpg → 'sora holding mug')."""
+    stem = re.sub(r"_[0-9a-f]{6,}$", "", Path(path).stem)
+    return norm_title(stem.replace("_", " "))
+
+
+def same_title(a, b):
+    """파일 이름은 제목이 길면 잘릴 수 있어서 앞부분이 같으면 같은 그림으로 본다."""
+    if not a or not b:
+        return False
+    return a == b or (min(len(a), len(b)) >= 12 and (a.startswith(b) or b.startswith(a)))
+
+
 class VideoRefused(RuntimeError):
     """Flow 가 영상 만들기를 거절함 (정책 위반, 유명인과 닮음 등) → 영상만 건너뛴다."""
 
@@ -196,6 +225,7 @@ class Flow:
     def send_prompt(self, text):
         # 보내기 직전의 [승인] 버튼 수를 기준으로, 이 요청에 새로 생기는 질문만 승인한다
         self.mark_old_questions()
+        self.asks_before = self.ask_count()
         box = self.prompt_box()
         box.click()
         self.page.keyboard.insert_text(text)
@@ -284,6 +314,51 @@ class Flow:
     def has_tile(self, key):
         return self.find_tile(key) is not None
 
+    def scan_grid(self, match, kind=None, max_steps=40):
+        """격자에서 match(칸) 가 참인 첫 칸. 지금 화면부터 보고, 없으면 맨 위에서부터 내려 가며 찾는다."""
+        for t in self.tiles(kind):
+            if match(t):
+                return t
+        self._scroll_grid(to_top=True)
+        time.sleep(1)
+        for _ in range(max_steps):
+            for t in self.tiles(kind):
+                if match(t):
+                    return t
+            if not self._scroll_grid():
+                break
+            time.sleep(1)
+        return None
+
+    def find_image(self, img, used_keys=(), used_titles=()):
+        """이미지 칸을 주소로, 주소가 바뀌었으면 제목으로 찾는다. 이미 쓴 칸은 빼고. 못 찾으면 None."""
+        title = tile_title(img.get("text"))
+        by_title = title and title not in used_titles
+
+        def match(t):
+            if t["key"] in used_keys:
+                return False
+            return t["key"] == img["key"] or bool(by_title and tile_title(t["text"]) == title)
+        return self.scan_grid(match, "image")
+
+    def click_send(self):
+        """프롬프트 칸이 비어 있을 때 오른쪽 보내기(→) 화살표를 누른다."""
+        try:
+            left = self.prompt_box(wait=3).evaluate("e => 'value' in e ? e.value : e.innerText", timeout=3000) or ""
+        except (RuntimeError, PlaywrightError):
+            return False
+        if left.strip():
+            return False
+        send = self.page.locator("button").filter(has_text=re.compile(r"arrow_forward|send|보내기"))
+        send = [b for b in send.all() if b.is_visible()]
+        if not send:
+            return False
+        try:
+            send[-1].click(timeout=3000)
+        except PlaywrightError:
+            return False
+        return True
+
     def _visible_boxes(self, loc):
         out = []
         for el in loc.all():
@@ -366,6 +441,19 @@ class Flow:
         }).length;
     }"""
 
+    ASK_JS = """() => [...document.querySelectorAll('p, div, span')].filter(e => {
+        const own = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').trim();
+        const r = e.getBoundingClientRect();
+        return own.length > 6 && /하시겠습니까|할까요\\?|진행할까요|would you like|do you want/i.test(own) && r.width > 0 && r.height > 0;
+    }).length"""
+
+    def ask_count(self):
+        """대화 창의 '…시작하시겠습니까?' 같은 확인 질문 글 수."""
+        try:
+            return self.page.evaluate(self.ASK_JS)
+        except PlaywrightError:
+            return 0
+
     def refusal_count(self):
         """대화 창에 '정책 위반 / 유명인과 닮음 → 만들 수 없음' 같은 거절 글이 몇 개 있는지."""
         try:
@@ -382,6 +470,7 @@ class Flow:
         last_count, last_change, last_note = -1, time.time(), 0
         before_keys = set(before_keys)
         fails_before = self.failed_count()
+        send_tries = [40, 150]   # [승인] 칸이 안 보이면 이 초에 보내기(→) 화살표를 눌러 본다
         if refusals_before is None:   # 보내기 전에 센 값을 받는 게 정확함 (거절이 바로 뜰 수도 있어서)
             refusals_before = self.refusal_count() if kind == "video" else 0
         while time.time() < deadline:
@@ -395,12 +484,27 @@ class Flow:
                     before_keys |= {t["key"] for t in self.tiles(kind)}   # 승인 전에 있던 영상은 제외
                     last_count = -1
                 if (self.question_seen and not self.approved) or (not self.question_seen and time.time() - start < 90):
+                    if send_tries and time.time() - start > send_tries[0]:
+                        send_tries.pop(0)
+                        # 확인 질문 글은 새로 떴는데 [승인] 칸을 못 찾을 때만
+                        if self.ask_count() > getattr(self, "asks_before", 0) and self.click_send():
+                            log("    [승인] 칸이 안 보여서 프롬프트 칸의 보내기(→) 화살표를 눌렀습니다.")
+                            self.question_seen = self.approved = True   # 화살표가 [승인]으로 보내진다
                     if time.time() - last_note > 60:
                         log("  확인 질문(승인)을 기다리는 중... (못 누르면 Flow 에서 [승인]을 직접 눌러 주세요)")
                         last_note = time.time()
                     time.sleep(3)
                     continue
-            new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
+            if kind == "video":
+                # 새 영상은 격자 맨 앞에 생긴다. 격자를 내렸다 올리면 예전 영상의 주소가 바뀌어 새 것처럼 보일 수 있어서
+                # (7번 트랙에 3번 영상을 받던 문제) 맨 위 줄에 있는 영상만 센다
+                self._scroll_grid(to_top=True)
+                every = self.tiles()
+                top = {t["key"] for t in every if t["y"] <= min((u["y"] for u in every), default=0) + 40}
+                new = [t for t in every if t["kind"] == "video" and t["key"] in top
+                       and t["key"] not in before_keys and not t["key"].endswith(":")]
+            else:
+                new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
             fails = max(0, self.failed_count() - fails_before)   # Flow 가 못 만든 칸 ('실패 … 수요가 많습니다')
             if len(new) + fails != last_count:
                 last_count, last_change = len(new) + fails, time.time()
@@ -1105,21 +1209,34 @@ def collect_images(flow, images, folder):
     folder.mkdir(parents=True, exist_ok=True)
     log("  새 컬렉션 만들고 이미지 넣기")
     flow.new_collection()
+    # 그림 주소는 만든 뒤에 바뀔 수 있어서, 주소로 못 찾으면 그림 제목(Flow 가 붙인 이름)으로 찾는다.
+    # 예전처럼 '격자 몇 번째' 로 찾으면 다른 트랙 그림을 넣거나 같은 그림을 두 번 넣어 몇 장씩 모자랐다.
+    track_titles = {tile_title(img.get("text")) for img in images} - {""}
+    used_keys, used_titles = set(), set()
+    added = 0
     for i, img in enumerate(images, 1):
-        try:
-            source = flow.tile(img["key"], refresh=True)
-        except RuntimeError:
-            # 그림 주소가 바뀌어 못 찾으면: 방금 만든 이미지는 격자 맨 앞에 있으므로 같은 순번의 이미지를 쓴다
+        found = flow.find_image(img, used_keys, used_titles)
+        if found is None:
+            # 제목도 모르면: 격자 맨 앞쪽(이 트랙 장수만큼)의 아직 안 넣은 이미지. 제목을 알면 이 트랙 제목인 것만
             flow._scroll_grid(to_top=True)
             time.sleep(1)
-            newest = flow.tiles("image")
-            if i - 1 >= len(newest):
-                raise
-            log(f"    ({i}번째 이미지를 주소로 못 찾아서 격자 순서로 찾습니다)")
-            source = flow.tile(newest[i - 1]["key"], refresh=True)
-        flow.drag(source, flow.tile(flow.first_collection()))
+            near = flow.tiles("image")[:len(images) + 3]
+            near = [t for t in near if t["key"] not in used_keys and tile_title(t["text"]) not in used_titles
+                    and (not track_titles or tile_title(t["text"]) in track_titles)]
+            if not near:
+                log(f"    !! {i}번째 이미지를 Flow 화면에서 찾지 못해 건너뜁니다")
+                continue
+            log(f"    ({i}번째 이미지를 주소·제목으로 못 찾아서 격자 앞쪽에서 찾습니다)")
+            found = near[0]
+        used_keys.add(found["key"])
+        if tile_title(found["text"]):
+            used_titles.add(tile_title(found["text"]))
+        flow.drag(flow.tile(found["key"], refresh=True), flow.tile(flow.first_collection()))
+        added += 1
         if i % 5 == 0:
             log(f"    {i}/{len(images)}장 넣음")
+    if not added:
+        raise RuntimeError("컬렉션에 넣을 이미지를 Flow 화면에서 찾지 못했습니다.")
 
     log("  컬렉션 다운로드")
     count = 0
@@ -1145,11 +1262,25 @@ def load_state(folder):
         return {}
 
 
+def _set_hidden(path, hidden):
+    """윈도우에서 기록 파일을 숨김 파일로 (탐색기·캡컷 조립에서 안 보이게). 숨김 파일은 덮어쓰기가 안 되므로 쓰기 전엔 푼다."""
+    if os.name != "nt" or not path.exists():
+        return
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetFileAttributesW(str(path), 0x2 if hidden else 0x80)
+    except (OSError, AttributeError):
+        pass
+
+
 def save_state(folder, **values):
     state = load_state(folder)
     state.update(values)
+    path = folder / STATE_NAME
     try:
-        (folder / STATE_NAME).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        _set_hidden(path, False)
+        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        _set_hidden(path, True)
     except OSError:
         pass
 
@@ -1165,10 +1296,22 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
 
     # 지난번에 이 트랙의 이미지·영상을 Flow 에 만들어 놓고 받기에서 실패했으면, 기록해 둔 그 칸을 찾아 다시 쓴다
     state = load_state(folder)
-    saved_images = state.get("images") or []
-    if not reuse and len(saved_images) >= n_images and flow.has_tile(saved_images[-1]) and flow.has_tile(saved_images[0]):
+    saved_images = [{"key": k, "text": tx} for k, tx in
+                    zip(state.get("images") or [], (state.get("titles") or []) + [""] * len(state.get("images") or []))]
+    local = [f for f in folder.iterdir() if f.suffix.lower() in IMAGE_EXTS]
+    if not reuse and ((folder / DONE_NAME).exists() or len(local) >= n_images):
+        # 이미지는 다 받아 두었고 영상만 없음 → 받아 둔 그림과 같은 제목의 그림을 Flow 에서 찾아 영상만 만든다
+        log(f"  이미지 {len(local)}장은 이미 받아 두었습니다 → 영상만 만듭니다")
+        titles = [file_title(f) for f in sorted(local)]
+        tile = flow.scan_grid(lambda t: any(same_title(tile_title(t["text"]), ft) for ft in titles), "image")
+        if tile is None:
+            raise RuntimeError("받아 둔 이 트랙 그림을 Flow 화면에서 찾지 못해 영상을 만들 수 없습니다.")
+        make_video(flow, track, folder, scene_dir, tile, cast)
+        return
+    if (not reuse and len(saved_images) >= n_images and flow.find_image(saved_images[-1])
+            and flow.find_image(saved_images[0])):
         log(f"  지난번에 Flow 에 만들어 둔 이 트랙 이미지 {len(saved_images)}장을 다시 씁니다 (새로 만들지 않음)")
-        images = [{"key": k} for k in saved_images[:n_images]]
+        images = saved_images[:n_images]
         reuse = "state"
         if state.get("video") and flow.has_tile(state["video"]):
             log("  지난번에 만들어 둔 이 트랙 영상도 다시 씁니다 (새로 만들지 않음)")
@@ -1189,7 +1332,7 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
                                 characters=cast, project=project)
     else:
         images = request_images(flow, track.image_prompt, n_images)
-    save_state(folder, images=[img["key"] for img in images])
+    save_state(folder, images=[img["key"] for img in images], titles=[img.get("text", "") for img in images])
 
     have_video = video_path(scene_dir, track.number) is not None
     if (folder / NO_VIDEO_NAME).exists():
@@ -1209,24 +1352,7 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         log("  Flow 화면 맨 앞의 기존 영상을 씁니다 (새로 만들지 않음)")
     else:
         first_made = images[-1]   # 새 이미지는 앞에 생기므로 맨 끝이 제일 처음 만든 것
-        if cast:
-            video_text = f"{lyric_prompt(track)}\n\n{LYRIC_VIDEO_REQUEST}"
-        else:
-            video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
-        log("  맨 끝 이미지를 프롬프트 칸에 끌어다 놓고 영상 요청")
-        before_video = {t["key"] for t in flow.tiles()}
-        flow.drag(flow.tile(first_made["key"], refresh=True), flow.prompt_box())
-        refusals_before = flow.refusal_count()
-        flow.send_prompt(video_text)
-        try:
-            video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True,
-                                  refusals_before=refusals_before)[0]
-            log("  영상 완성")
-        except VideoRefused as e:
-            # 영상은 싱글곡에만 따로 쓰는 것이라, 거절되면 영상 없이 이미지만 받고 넘어간다
-            log(f"  !! {e} 영상은 건너뛰고 이미지만 받습니다.")
-            (folder / NO_VIDEO_NAME).write_text("Flow 가 영상을 거절함", encoding="utf-8")
-            video = None
+        video = make_video(flow, track, folder, scene_dir, first_made, cast, download=False)
     if video:
         save_state(folder, video=video["key"])
         # 영상을 먼저 받는다 (이미지 컬렉션에서 실패해도 영상은 남도록 → 다시 실행할 때 영상을 또 만들지 않음)
@@ -1239,6 +1365,32 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         (folder / STATE_NAME).unlink(missing_ok=True)   # 다 받았으니 기록은 지움
         if count < n_images:   # Flow 가 몇 장을 '실패'로 못 만듦 → 받은 것으로 끝난 트랙으로 침
             (folder / DONE_NAME).write_text(f"{count}", encoding="utf-8")
+
+
+def make_video(flow, track, folder, scene_dir, source, cast=None, download=True):
+    """source 이미지를 프롬프트 칸에 끌어다 놓고 영상을 요청한다. 거절되면 None."""
+    if cast:
+        video_text = f"{lyric_prompt(track)}\n\n{LYRIC_VIDEO_REQUEST}"
+    else:
+        video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
+    log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
+    before_video = {t["key"] for t in flow.tiles()}
+    found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
+    flow.drag(flow.tile(found["key"]) if found else flow.tile(source["key"], refresh=True), flow.prompt_box())
+    refusals_before = flow.refusal_count()
+    flow.send_prompt(video_text)
+    try:
+        video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True,
+                              refusals_before=refusals_before)[0]
+        log("  영상 완성")
+    except VideoRefused as e:
+        # 영상은 싱글곡에만 따로 쓰는 것이라, 거절되면 영상 없이 이미지만 받고 넘어간다
+        log(f"  !! {e} 영상은 건너뛰고 이미지만 받습니다.")
+        (folder / NO_VIDEO_NAME).write_text("Flow 가 영상을 거절함", encoding="utf-8")
+        video = None
+    if video and download:
+        download_video(flow, video, scene_dir, track.number)
+    return video
 
 
 def download_video(flow, video, scene_dir, number):

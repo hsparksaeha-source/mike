@@ -104,7 +104,8 @@ function openMenu(item, button) {
   m.querySelectorAll("div").forEach(d => d.onclick = () => {
     if (d.textContent === "컬렉션 다운로드") {
       closeMenus();
-      const files = item.members.map(id => ({name: `image_${id}.jpg`, text: `image ${id}`}));
+      const files = item.members.map(id => ({name: `${(items.find(i => i.id === id) || {label: "image " + id}).label.replace(/ /g, "_")}_${(0xabc000 + id).toString(16)}.jpg`,
+                                             text: `image ${id}`}));
       if (zipMode) {   // 실제 Flow 처럼 새 창이 열리고 그 창에서 내려받음
         const w = window.open("about:blank");
         const a = w.document.createElement("a");
@@ -136,6 +137,8 @@ function draw() {
       t.addEventListener("drop", e => {
         e.preventDefault();
         if (dragging && dragging.kind === "image" && !item.members.includes(dragging.id)) item.members.push(dragging.id);
+        if (params.get("rekeydrag") === "1")   // 넣을 때마다 모든 그림 주소가 바뀌는 경우
+          items.forEach(it => { if (it.kind === "image") it.rev = (it.rev || 0) + 1; });
         draw();
       });
     } else if (item.kind === "failed") {   // 실제 Flow 처럼: 그림 없이 '실패' 안내와 아이콘 버튼만
@@ -147,7 +150,7 @@ function draw() {
       t.innerHTML = `<img src="${svg(item.id + (item.rev || 0) * 100000)}" draggable="false"><div class="label">image ${item.label}</div>`;
     } else {
       // 실제처럼 영상 칸 위쪽에 늘 보이는 재생 단추 (눌리면 영상이 움직임)
-      t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id)}"></video>` +
+      t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id + (item.rev || 0) * 100000)}"></video>` +
                     `<button class="playbtn" style="position:absolute;left:8px;top:8px">play_arrow</button>` +
                     `<div class="label">play_circle ${item.label}</div>`;
     }
@@ -196,7 +199,10 @@ function panel() {
 
 function submit() {
   const text = prompt.innerText.trim();
-  if (!text) return;
+  if (!text) {
+    if (window.pendingOk) { const ok = window.pendingOk; window.pendingOk = null; window.sendApproved = true; ok(); }
+    return;
+  }
   const chat = panel();
   window.requests.push({text, attachment: attachment && attachment.id, chars: window.attachedChars});
   window.attachedChars = [];
@@ -217,6 +223,12 @@ function submit() {
       <div class="ok"><span>check</span> <span>승인</span></div><div class="always"><span>check</span> <span>항상 승인</span></div>
       <div class="no"><span>close</span> <span>거부</span></div>`;
     chat.appendChild(ask);
+    if (params.get("hideapprove") === "1") {   // [승인]·[거부] 칸이 안 보이는 경우 → 빈 칸에서 보내기 화살표
+      ask.querySelectorAll(".ok, .always, .no").forEach(d => d.style.display = "none");
+      window.pendingOk = () => ask.querySelector(".ok").onclick();
+    }
+    if (params.get("videorekey") === "1")   // 예전 영상 칸의 주소가 바뀌는 경우 (새 영상처럼 보임)
+      items.forEach(it => { if (it.kind === "video") it.rev = (it.rev || 0) + 1; });
     ask.querySelector(".always").onclick = () => { window.alwaysClicked = true; };
     ask.querySelector(".ok").onclick = () => {   // 안쪽 '승인' 글씨를 눌러도 이 칸으로 전달됨
       window.approved = (window.approved || 0) + 1;
@@ -224,7 +236,7 @@ function submit() {
       chat.insertAdjacentHTML("beforeend", "<div class='bubble'>승인</div>");
       setTimeout(() => {
         const id = nextId++;
-        items.unshift({id, kind: "video", label: "Drone video", from: att.id}); draw();
+        items.unshift({id, kind: "video", label: "Drone video " + id, from: att.id}); draw();
         chat.insertAdjacentHTML("beforeend", `<div style="position:relative;width:240px;height:135px">
           <video src="data:video/mp4;base64,AAAA" poster="${svg(8000 + id)}" style="width:240px;height:135px"></video>
           <span>play_circle</span></div><p>영상 생성을 시작했습니다</p>`);
@@ -235,7 +247,7 @@ function submit() {
     const fail = Number(params.get("fail") || 0);   // 끝의 몇 장은 '실패' 카드로
     const make = () => {
       for (let i = 0; i < n; i++) {   // 하나씩 생기고, 새 것이 앞에 붙는다
-        setTimeout(() => { items.unshift({id: nextId++, kind: i >= n - fail ? "failed" : "image", label: "Frozen lake"}); draw(); },
+        setTimeout(() => { const id = nextId++; items.unshift({id, kind: i >= n - fail ? "failed" : "image", label: "Frozen lake " + id}); draw(); },
                    delay + i * 60);
       }
       if (params.get("rekey") === "1")   // 다 만들고 조금 뒤 그림 주소가 바뀌는 경우
