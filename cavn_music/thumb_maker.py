@@ -46,6 +46,7 @@ BIG_MAX_HEIGHT = 760        # 큰 문구 덩어리 최대 높이 (왼쪽 위 영
 BIG_CENTER_Y = 505          # 큰 문구 덩어리의 세로 가운데 (가운데 조금 위)
 BIG_LINE_GAP = 1.22         # 줄 간격 (글자 크기의 배수)
 BIG_WORD_GAP = 0.45         # 낱말 사이를 더 띄움 (글자 크기의 배수)
+EN_WORD_GAP = 0.05          # 영어만 있는 줄은 보통 띄어쓰기 (영문 썸네일)
 BIG_STROKE = 0.09           # 테두리 두께 (글자 크기의 배수)
 SMALL_PX = 50               # 왼쪽 위 영어 글자 크기
 SMALL_MARGIN = (40, 28)
@@ -80,6 +81,7 @@ class Thumb:
     prompt: str = ""        # 배경 이미지 프롬프트
     options: list = field(default_factory=list)   # 한글 문구들 (한 개 = 썸네일 한 장)
     english: list = field(default_factory=list)   # 왼쪽 위 영어 문구 (줄들)
+    en_options: list = field(default_factory=list)   # 영문 썸네일 문구들 (한 개 = 영문 썸네일 한 장)
 
 
 SINGLE_RE = re.compile(r"^Single\s*(\d+)\s*[.:]\s*(.+)$", re.I)
@@ -175,8 +177,10 @@ def parse_thumbnails(text):
                     text_all = " ".join(opt.lines)
                     if has_hangul(text_all):
                         thumb.options.append(opt)
-                    elif not thumb.english:
-                        thumb.english = opt.lines
+                    else:
+                        thumb.en_options.append(opt)
+                        if not thumb.english:
+                            thumb.english = opt.lines
         elif not thumb.prompt and (("썸네일" in name_part and "이미지" in name_part)
                                    or re.match(r"^대표 이미지", name_part)):
             cm = CODE_RE.search(body)
@@ -194,6 +198,8 @@ def parse_thumbnails(text):
             o.label = base if labels[base] == 1 else f"{base}_{labels[base]}"
         if not t.english and result[0].english:
             t.english = result[0].english
+        for k, o in enumerate(t.en_options, 1):   # 영문 썸네일 이름: 영문 (여러 안이면 영문1, 영문2 …)
+            o.label = "영문" if len(t.en_options) == 1 else f"영문{k}"
     return result
 
 
@@ -315,11 +321,15 @@ def _draw_line(draw, x, y, text, px, fonts, stroke, word_gap=0.0):
                 x += f.getlength(word)
 
 
+def _gap(line):
+    return BIG_WORD_GAP if has_hangul(line) else EN_WORD_GAP
+
+
 def _fit_px(line, fonts, max_px=BIG_MAX_PX):
     """그 줄이 한 줄 폭에 들어가는 가장 큰 글자 크기와 그때의 폭."""
     px = max_px
     while True:
-        w = _measure(line, px, fonts, BIG_WORD_GAP)[0] + 2 * px * BIG_STROKE
+        w = _measure(line, px, fonts, _gap(line))[0] + 2 * px * BIG_STROKE
         if w <= BIG_MAX_WIDTH or px <= 40:
             return px, w
         px -= 5
@@ -366,7 +376,7 @@ def render_jpg(bg_path, option, english, fonts, out_path):
     draw = ImageDraw.Draw(img)
     for line, px, w, base in big_layout(option.lines, fonts):
         stroke = max(4, round(px * BIG_STROKE))
-        _draw_line(draw, (WIDTH - w) / 2 + stroke, base, line, px, fonts, stroke, BIG_WORD_GAP)
+        _draw_line(draw, (WIDTH - w) / 2 + stroke, base, line, px, fonts, stroke, _gap(line))
     x, y = SMALL_MARGIN
     for line in english:
         _draw_line(draw, x, y + SMALL_PX * 0.85, line, SMALL_PX, fonts, max(3, round(SMALL_PX * BIG_STROKE)))
@@ -523,6 +533,8 @@ def run(md_path, out_root, use_flow=True, capcut_dir=None, page=None, confirm=Tr
             print(f"      {o.label}: {' / '.join(o.lines)}")
         if t.english:
             print(f"      (왼쪽 위) {' / '.join(t.english)}")
+        for o in t.en_options:
+            print(f"      {o.label} 썸네일: {' / '.join(o.lines)}")
         if not have:
             todo_bg.append(t)
     if confirm and input("\n시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
@@ -570,6 +582,16 @@ def run(md_path, out_root, use_flow=True, capcut_dir=None, page=None, confirm=Tr
             made.append(jpg)
             try:
                 build_capcut(capcut_dir, f"{album} 썸네일 {name}", bgs[0], o, t.english, fonts)
+                log(f"  {jpg.name}  + 캡컷 초안 '{album} 썸네일 {name}'")
+            except Exception as e:
+                log(f"  {jpg.name}  (!! 캡컷 초안 실패: {e})")
+        # 영문 썸네일: 영어 문구를 가운데에 크게 (Times New Roman Bold), 왼쪽 위 작은 글씨는 없음
+        for o in t.en_options:
+            name = f"{t.name}_{o.label}"
+            jpg = render_jpg(bgs[0], o, [], fonts, out_dir / f"{name}.jpg")
+            made.append(jpg)
+            try:
+                build_capcut(capcut_dir, f"{album} 썸네일 {name}", bgs[0], o, [], fonts)
                 log(f"  {jpg.name}  + 캡컷 초안 '{album} 썸네일 {name}'")
             except Exception as e:
                 log(f"  {jpg.name}  (!! 캡컷 초안 실패: {e})")

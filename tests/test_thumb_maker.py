@@ -155,6 +155,8 @@ def test_parse_sacred_main_only():
     assert [(o.label, o.lines[0]) for o in main.options] == [
         ("문구", "저녁 종소리의 기도"), ("1안", "가을 저녁, 종소리가 닿는 곳에서"), ("2안", "노을에서 별빛까지")]
     assert main.english == ["Where the Evening Bell Reaches", "Sacred New Age Vocal Album 5"]
+    assert [(o.label, o.lines) for o in main.en_options] == [
+        ("영문", ["Where the Evening Bell Reaches", "Sacred New Age Vocal Album 5"])]
 
 
 def test_run_makes_jpg_and_capcut(tmp_path):
@@ -169,14 +171,19 @@ def test_run_makes_jpg_and_capcut(tmp_path):
     Image.new("RGB", (1376, 768), (90, 60, 40)).save(album / "이미지" / "1번" / "img.jpg")
 
     made = thumb_maker.run(md, out, use_flow=False, capcut_dir=tmp_path / "drafts", confirm=False)
-    assert sorted(p.name for p in made) == ["메인_한글1.jpg", "메인_한글2.jpg", "싱글1_한글1.jpg"]
+    assert sorted(p.name for p in made) == ["메인_영문.jpg", "메인_한글1.jpg", "메인_한글2.jpg",
+                                            "싱글1_영문.jpg", "싱글1_한글1.jpg"]   # 영문 썸네일도
     img = Image.open(made[0])
     assert img.size == (1920, 1080) and made[0].stat().st_size < 2 * 1024 * 1024
     assert (album / "썸네일" / "배경" / "싱글1" / "img.jpg").exists()
 
     drafts = sorted(p.name for p in (tmp_path / "drafts").iterdir() if p.is_dir())
-    assert drafts == ["Snowlight 썸네일 메인_한글1", "Snowlight 썸네일 메인_한글2", "Snowlight 썸네일 싱글1_한글1"]
-    content = json.loads((tmp_path / "drafts" / drafts[0] / "draft_content.json").read_text(encoding="utf-8"))
+    assert drafts == ["Snowlight 썸네일 메인_영문", "Snowlight 썸네일 메인_한글1", "Snowlight 썸네일 메인_한글2",
+                      "Snowlight 썸네일 싱글1_영문", "Snowlight 썸네일 싱글1_한글1"]
+    en = json.loads((tmp_path / "drafts" / drafts[0] / "draft_content.json").read_text(encoding="utf-8"))
+    assert [json.loads(m["content"])["text"] for m in en["materials"]["texts"]] == [
+        "Snowlight Serenade", "Winter Easy", "Listening Orchestra"]   # 영문 썸네일: 영어 문구만 크게 (긴 줄은 둘로)
+    content = json.loads((tmp_path / "drafts" / drafts[1] / "draft_content.json").read_text(encoding="utf-8"))
     texts = [json.loads(m["content"])["text"] for m in content["materials"]["texts"]]
     assert texts == ["눈 오는 날", "낭만 경음악 10곡", "Snowlight Serenade", "Winter Easy Listening Orchestra"]
     styles = json.loads(content["materials"]["texts"][1]["content"])["styles"]
