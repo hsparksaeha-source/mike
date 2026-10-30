@@ -55,8 +55,8 @@ def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
     assert requests[0]["text"].startswith("photorealistic photograph of a quiet snow-covered street")
     assert "15장" in requests[0]["text"]
     assert requests[1]["text"].startswith("가로등이 켜진 눈 덮인 밤거리")
-    # 트랙 1 이미지는 id 3~17 → 영상은 제일 처음 만든 3번으로
-    assert requests[1]["attachment"] == 3
+    # 트랙 1 이미지는 id 3~17 → 영상은 화면 맨 위 첫 칸(맨 나중에 만든 17번)으로
+    assert requests[1]["attachment"] == 17
     # 새 컬렉션 2개 (새 것이 앞), 각각 그 트랙의 이미지 15장, 처음 있던 컬렉션은 그대로
     assert sorted(collections[1]) == list(range(3, 18))
     assert len(collections[0]) == 15 and collections[2] == [1]
@@ -86,7 +86,7 @@ def test_reuse_existing_images(tmp_path, monkeypatch):
         collections = page.evaluate("window.collections")
         browser.close()
     assert [bool(r["attachment"]) for r in requests] == [False, True]   # 이미지 요청은 처음 1번뿐
-    assert requests[1]["attachment"] == 3                              # 그 15장(3~17) 중 제일 처음 것
+    assert requests[1]["attachment"] == 17                             # 그 15장(3~17) 중 화면 맨 위 첫 칸
     assert sorted(collections[0]) == list(range(3, 18))
     assert len(list((tmp_path / "이미지" / "1번").iterdir())) == 15
     assert [p.name for p in (tmp_path / "장면").iterdir()] == ["1.mp4"]
@@ -381,5 +381,5 @@ def test_video_when_first_drop_fails(tmp_path, monkeypatch):
         requests = page.evaluate("window.requests")
         browser.close()
     assert asked == 1
-    assert "사용할 이미지: 'Frozen lake 3'" in requests[1]["text"]
+    assert "사용할 이미지: 'Frozen lake 17'" in requests[1]["text"]
     assert (scenes / "1.mp4").exists() and len(list(folder.glob("*.jpg"))) == 15

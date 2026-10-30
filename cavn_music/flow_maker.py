@@ -563,8 +563,10 @@ class Flow:
                 new = [t for t in every if t["kind"] == "video" and t["key"] in top
                        and t["key"] not in before_keys and not t["key"].endswith(":")]
             else:
+                # 새 그림은 격자 맨 앞에 생긴다 → 맨 앞 몇 칸만 본다 (아래쪽 예전 그림이 다시 그려져 주소가 바뀐 것은 빼려고)
                 self._scroll_grid(to_top=True)
-                new = [t for t in self.tiles(kind) if t["key"] not in before_keys and not t["key"].endswith(":")]
+                new = [t for t in self.tiles(kind)[:want + 8]
+                       if t["key"] not in before_keys and not t["key"].endswith(":")]
             if new and time.time() - start < NEW_GRACE_SEC:
                 # 이렇게 빨리 생길 수는 없다 → 화면이 다시 그려져 주소가 바뀐 예전 칸 (새 이미지 50개 문제)
                 before_keys |= {t["key"] for t in new}
@@ -1534,7 +1536,11 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         video = videos[0]
         log("  Flow 화면 맨 앞의 기존 영상을 씁니다 (새로 만들지 않음)")
     else:
-        first_made = images[-1]   # 새 이미지는 앞에 생기므로 맨 끝이 제일 처음 만든 것
+        # 영상은 화면 맨 위 첫 칸의 이미지(방금 만든 것 중 맨 나중 것)로 한다. 찾을 필요 없이 바로 집을 수 있다.
+        flow._scroll_grid(to_top=True)
+        time.sleep(1)
+        top = flow.tiles("image")[:1]
+        first_made = top[0] if top else images[0]
         video = make_video(flow, track, folder, scene_dir, first_made, cast, download=False)
     if video:
         save_state(folder, video=video["key"])
@@ -1559,7 +1565,8 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
         video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
     log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
     before_video = {t["key"] for t in flow.tiles()}
-    found = flow.find_image(source)   # 그림 주소가 바뀌었으면 제목으로
+    # 격자 맨 앞쪽에서 먼저 찾는다 (같은 제목의 예전 그림이 아래쪽에 많아서)
+    found = flow.find_image(source, top=30) or flow.find_image(source)
     if found is None:
         raise RuntimeError("영상에 쓸 이 트랙 이미지를 Flow 화면에서 찾지 못했습니다.")
     name = caption(found["text"]) or caption(source.get("text"))
@@ -1567,7 +1574,7 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
         video_text += f"\n(사용할 이미지: '{name}')"
 
     def attach():
-        f = flow.find_image(source) or found
+        f = flow.find_image(source, top=30) or found
         loc = flow.tile(f["key"], refresh=True)
         if not flow.drag(loc, flow.prompt_box()):
             loc.scroll_into_view_if_needed()
