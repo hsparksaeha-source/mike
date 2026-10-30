@@ -97,6 +97,9 @@ TILES_JS = """(box) => {
         if (seen.has(tile)) return;
         const r = tile.getBoundingClientRect();
         if (r.width < 60 || r.height < 40 || r.left < sideRight || inPrompt(r)) return;
+        // 화면 위로 지나간 칸, 숨겨 둔 칸(격자가 칸을 재활용할 때)은 뺀다
+        const cs = getComputedStyle(tile);
+        if (r.bottom < 0 || cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) === 0) return;
         seen.add(tile);
         tile.setAttribute('data-cavn-tile', key);
         out.push({kind, key, x: r.left, y: r.top, text: (tile.innerText || '') + (extra ? ' \\n' + extra : '')});
@@ -559,14 +562,16 @@ class Flow:
                 # (7번 트랙에 3번 영상을 받던 문제) 맨 위 줄에 있는 영상만 센다
                 self._scroll_grid(to_top=True)
                 every = self.tiles()
-                top = {t["key"] for t in every[:12]}   # 격자 맨 앞 12칸 (맨 윗줄과 그다음 줄 정도)
+                vh = self.page.evaluate("innerHeight")
+                top = {t["key"] for t in every if t["y"] < vh * 1.5}   # 격자를 맨 위로 올렸을 때 화면 안쪽(윗부분)
                 new = [t for t in every if t["kind"] == "video" and t["key"] in top
                        and t["key"] not in before_keys and not t["key"].endswith(":")]
             else:
                 # 새 그림은 격자 맨 앞에 생긴다 → 맨 앞 몇 칸만 본다 (아래쪽 예전 그림이 다시 그려져 주소가 바뀐 것은 빼려고)
                 self._scroll_grid(to_top=True)
-                new = [t for t in self.tiles(kind)[:want + 8]
-                       if t["key"] not in before_keys and not t["key"].endswith(":")]
+                vh = self.page.evaluate("innerHeight")
+                new = [t for t in self.tiles(kind) if t["y"] < vh * 2.5
+                       and t["key"] not in before_keys and not t["key"].endswith(":")]
             if new and time.time() - start < NEW_GRACE_SEC:
                 # 이렇게 빨리 생길 수는 없다 → 화면이 다시 그려져 주소가 바뀐 예전 칸 (새 이미지 50개 문제)
                 before_keys |= {t["key"] for t in new}
@@ -585,12 +590,12 @@ class Flow:
             if time.time() - last_note > 60:
                 log(f"  기다리는 중... (새 {'이미지' if kind == 'image' else '영상'} {len(new)}개)")
                 last_note = time.time()
-                if kind == "video" and not new and not getattr(self, "_video_debug", False) and time.time() - start > 240:
+                if not new and not getattr(self, "_wait_debug", False) and time.time() - start > 150:
                     # 고칠 때 볼 수 있게: 격자 맨 앞 칸들이 무엇으로 보이는지 남긴다
-                    self._video_debug = True
+                    self._wait_debug = True
                     for t in self.tiles()[:4]:
                         seen = "예전" if t["key"] in before_keys else "새것"
-                        log(f"    (맨 앞 칸: {t['kind']} / {seen} / {caption(t['text'])[:30]} / {t['key'][:50]})")
+                        log(f"    (맨 앞 칸: {t['kind']} / y={int(t['y'])} / {seen} / {caption(t['text'])[:30]} / {t['key'][:50]})")
             time.sleep(3)
         raise RuntimeError(f"{'이미지가' if kind == 'image' else '영상이'} 제한 시간 안에 다 만들어지지 않았습니다.")
 
