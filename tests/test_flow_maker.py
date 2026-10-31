@@ -383,3 +383,20 @@ def test_video_when_first_drop_fails(tmp_path, monkeypatch):
     assert asked == 1
     assert "사용할 이미지: 'Frozen lake 17'" in requests[1]["text"]
     assert (scenes / "1.mp4").exists() and len(list(folder.glob("*.jpg"))) == 15
+
+
+def test_images_one_by_one_when_collection_zip_does_not_start(tmp_path, monkeypatch):
+    """컬렉션 다운로드가 시작되지 않으면, 방금 만든 그림을 한 장씩 [⋮] → [다운로드] 로 받는다."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&nozip=1")
+        flow = flow_maker.Flow(page)
+        flow_maker.request_images(flow, "older", 3)
+        images = flow_maker.request_images(flow, "photorealistic test", 4)
+        count = flow_maker.collect_images(flow, images, tmp_path / "1번")
+        browser.close()
+    names = sorted(p.name for p in (tmp_path / "1번").glob("*.jpg"))
+    assert count == 4 and names == [f"Frozen_lake_{i}_abc00{i:x}.jpg" for i in range(6, 10)]

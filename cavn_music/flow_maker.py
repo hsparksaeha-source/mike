@@ -1060,7 +1060,7 @@ class Flow:
             raise RuntimeError("컬렉션을 찾지 못했습니다.")
         return cols[0]["key"]   # 새로 만든 컬렉션은 격자 맨 앞
 
-    def download_collection(self, key, dest_dir, n_expected, menu_re=None, sub_re=None, kinds=None):
+    def download_collection(self, key, dest_dir, n_expected, menu_re=None, sub_re=None, kinds=None, start_timeout=None):
         """[⋮] → [컬렉션 다운로드]. 압축 파일 하나로 오든, 이미지가 낱개로 여러 개 오든 모두 받는다.
         - 다운로드는 새로 열리는 창(탭)에서 일어날 수 있어서, 모든 창의 다운로드를 지켜본다.
         - 크롬이 프로그램을 거치지 않고 바로 '다운로드' 폴더에 저장하는 경우도 있어서,
@@ -1134,6 +1134,8 @@ class Flow:
                 idle = time.time() - last[1]
                 if count and (one_zip and idle > 3 or count >= n_expected and idle > 3 or idle > 60):
                     break
+                if not count and start_timeout and time.time() - start > start_timeout:
+                    break   # 아예 시작도 안 됨 → 오래 기다리지 않는다
             if not got and not folder_files:
                 # 고칠 때 볼 수 있게 그때 화면과 떠 있던 메뉴 글을 남긴다
                 try:
@@ -1451,13 +1453,37 @@ def collect_images(flow, images, folder):
 
     log("  컬렉션 다운로드")
     count = 0
-    for path in flow.download_collection(flow.first_collection(), folder, counted or added):
-        if path.suffix.lower() == ".zip":
-            count += extract_images(path, folder)
-            path.unlink()
-        else:
-            count += 1
+    try:
+        for path in flow.download_collection(flow.first_collection(), folder, counted or added, start_timeout=90):
+            if path.suffix.lower() == ".zip":
+                count += extract_images(path, folder)
+                path.unlink()
+            else:
+                count += 1
+    except RuntimeError as e:
+        # 컬렉션(zip)이 안 받아지면: 방금 만든 그림(격자 맨 앞)을 한 장씩 [⋮] → [다운로드] 로 받는다
+        log(f"    !! {str(e).splitlines()[0]}")
+        count = download_one_by_one(flow, added, folder)
     log(f"    이미지 {count}장 저장 → {folder}")
+    return count
+
+
+def download_one_by_one(flow, n, folder):
+    log(f"    컬렉션 대신 이미지 {n}장을 한 장씩 받습니다")
+    flow._scroll_grid(to_top=True)
+    time.sleep(1)
+    keys = [t["key"] for t in flow.tiles("image")[:n]]
+    count = 0
+    menu = re.compile(r"^\s*(file_download|download)?\s*(다운로드|Download)\s*$", re.I)
+    size = re.compile(r"^\s*(원본|Original|4K|2K|1K)\b", re.I)
+    for i, key in enumerate(keys, 1):
+        try:
+            got = flow.download_collection(key, folder, 1, menu_re=menu, sub_re=size, kinds=IMAGE_EXTS, start_timeout=60)
+            count += len(got)
+        except (RuntimeError, PlaywrightError) as e:
+            log(f"      !! {i}번째 이미지 받기 실패: {str(e).splitlines()[0]}")
+        if i % 5 == 0:
+            log(f"      {i}/{len(keys)}장 받음")
     return count
 
 

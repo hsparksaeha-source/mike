@@ -104,6 +104,7 @@ function openMenu(item, button) {
   m.querySelectorAll("div").forEach(d => d.onclick = () => {
     if (d.textContent === "컬렉션 다운로드") {
       closeMenus();
+      if (params.get("nozip") === "1") return;   // 컬렉션 다운로드가 아무 일도 안 일어나는 경우
       const files = item.members.map(id => ({name: `${(items.find(i => i.id === id) || {label: "image " + id}).label.replace(/ /g, "_")}_${(0xabc000 + id).toString(16)}.jpg`,
                                              text: `image ${id}`}));
       if (zipMode) {   // 실제 Flow 처럼 새 창이 열리고 그 창에서 내려받음
@@ -116,6 +117,14 @@ function openMenu(item, button) {
         files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([new Uint8Array([0xff, 0xd8, 0xff]), f.text])), i * 400));
         window.open("about:blank");   // 다운로드 때문에 새 창이 열리는 경우
       }
+    }
+    if (d.textContent === "다운로드" && item.kind === "image") {   // 그림 한 장 받기 (크기 고르는 메뉴)
+      m.innerHTML = "<div role='menuitem'>1K</div><div role='menuitem'>2K</div>";
+      m.querySelector("div").onclick = () => {
+        closeMenus();
+        download(`${item.label.replace(/ /g, "_")}_${(0xabc000 + item.id).toString(16)}.jpg`,
+                 new Blob([new Uint8Array([0xff, 0xd8, 0xff]), `image ${item.id}`]));
+      };
     }
     if (d.textContent === "다운로드" && item.kind === "video") {
       m.innerHTML = "<div role='menuitem'>원본 크기(720p)</div><div role='menuitem'>1080p로 업스케일</div>";
