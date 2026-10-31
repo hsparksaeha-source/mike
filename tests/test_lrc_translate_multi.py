@@ -26,9 +26,9 @@ def test_parse_and_letters():
     assert lrc.has_letters("雪が降る") and lrc.has_letters("Привет") and not lrc.has_letters("♪ 123 !")
 
 
-def test_original_on_top_translation_below():
+def test_translation_line_first_in_file_so_original_shows_on_top():
     parsed, todo = lrc.parse_lrc("[00:12.34]Tu sei la mia canzone")
     todo[0]["translated_text"] = "너는 나의 노래"
-    assert lrc.build_lines(parsed, "x2ko") == ["[00:12.34]Tu sei la mia canzone", "[00:12.34]너는 나의 노래"]
+    assert lrc.build_lines(parsed, "x2ko") == ["[00:12.34]너는 나의 노래", "[00:12.34]Tu sei la mia canzone"]
     todo[0]["translated_text"] = "You are my song"
-    assert lrc.build_lines(parsed, "x2en") == ["[00:12.34]Tu sei la mia canzone", "[00:12.34]You are my song"]
+    assert lrc.build_lines(parsed, "x2en") == ["[00:12.34]You are my song", "[00:12.34]Tu sei la mia canzone"]
