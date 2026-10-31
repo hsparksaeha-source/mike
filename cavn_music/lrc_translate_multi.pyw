@@ -2,8 +2,9 @@
 
 기존 'LRC 이중자막 생성기'(영-한 / 한-영) 와 같은 화면이고, 원문이 어느 나라 말이든 된다
 (이탈리아어 칸쏘네, 일본어, 스페인어 …). 원문 언어는 구글 번역이 알아서 찾는다.
-- 영상(플레이어·캡컷)에서 원문이 위, 번역(영어·한국어)이 아래로 보이게 한다.
-  같은 시간의 두 줄은 영상에서 거꾸로 쌓여 보이므로, 파일에는 번역 줄을 먼저 쓰고 원문 줄을 다음에 쓴다.
+- 결과 칸에는 원문(다국어)이 위, 번역(영어·한국어)이 아래로 보인다.
+- 같은 시간의 두 줄은 영상(플레이어·캡컷)에서 거꾸로 쌓여 보이므로, 저장할 때만 두 줄의 순서를 바꿔 쓴다.
+  → 영상에서도 원문이 위, 번역이 아래.
 구글 번역 API 키: google_translate_api_key.txt (이 파일 옆 → 위 폴더 → 바탕화면의 기존 번역기 폴더)
 실행: LRC다국어번역기.bat
 """
@@ -64,11 +65,27 @@ def build_lines(parsed_items, direction):
             out.append(item["original"])
             continue
         ts, orig, trans = item["timestamp"], item["original_text"], item["translated_text"]
-        # 파일에는 번역 → 원문 순서. 영상에서는 거꾸로 쌓여 원문이 위, 번역이 아래로 보인다
+        out.append(f"{ts}{orig}")     # 결과 칸: 원문이 위, 번역이 아래
         if trans:
             out.append(f"{ts}{trans}")
-        out.append(f"{ts}{orig}")
     return out
+
+
+def for_video(text):
+    """저장용: 같은 시간이 붙은 두 줄(원문·번역)의 순서를 바꾼다.
+    영상에서는 같은 시간의 줄이 거꾸로 쌓여 보이므로, 이렇게 저장해야 영상에서 원문이 위로 보인다."""
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        a = TIME_RE.match(lines[i].strip())
+        b = TIME_RE.match(lines[i + 1].strip()) if i + 1 < len(lines) else None
+        if a and b and a.group(1) == b.group(1):
+            out += [lines[i + 1], lines[i]]
+            i += 2
+        else:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out)
 
 
 def parse_lrc(text):
@@ -297,7 +314,7 @@ class SubtitleTranslatorApp:
         if filepath:
             try:
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(result_text)
+                    f.write(for_video(result_text))   # 영상에서 원문이 위로 보이게 두 줄 순서를 바꿔 저장
                 self.status_label.config(text=f"저장 완료: {filepath}", fg="blue")
                 messagebox.showinfo("성공", "파일이 성공적으로 저장되었습니다!")
             except Exception as e:
