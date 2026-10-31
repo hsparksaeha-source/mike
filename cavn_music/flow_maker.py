@@ -1026,18 +1026,51 @@ class Flow:
                 inside.append(b)
         if not inside:
             raise RuntimeError("칸 위의 [⋮] 버튼을 찾지 못했습니다.")
+        btn = inside[0].bounding_box()
+        # 지금 화면에 있는 것에 표시를 해 두고, 누른 뒤 새로 생긴 메뉴 항목만 고르게 한다
+        self.page.evaluate("""() => { document.querySelectorAll('[data-cavn-oldm]').forEach(e => e.removeAttribute('data-cavn-oldm'));
+            document.querySelectorAll('body *').forEach(e => e.setAttribute('data-cavn-oldm', '1')); }""")
         inside[0].click()
         time.sleep(0.8)
+        return btn
+
+    def click_near(self, text_re, near, timeout=None, limit=450):
+        """text_re 글이 있는 항목 중 near(방금 누른 단추) 에 가장 가까운 것을 누른다.
+        (Flow 는 예전에 연 메뉴를 화면 어딘가에 남겨 둘 때가 있어서, '처음 보이는 것' 을 누르면
+        앞 컬렉션·다른 그림의 메뉴를 누르게 된다 → 컬렉션이 안 받아지고 같은 그림만 받아지던 문제)"""
+        deadline = time.time() + (timeout or 5)
+        while True:
+            cands = self._visible_boxes(self.page.get_by_role("menuitem", name=text_re)) or \
+                self._visible_boxes(self.page.get_by_text(text_re))
+            fresh = []
+            for c in cands:   # [⋮] 를 누른 뒤 새로 생긴 항목을 먼저
+                try:
+                    if not c[0].evaluate("e => e.hasAttribute('data-cavn-oldm')", timeout=2000):
+                        fresh.append(c)
+                except PlaywrightError:
+                    pass
+            cands = fresh or cands
+            if near:
+                cx, cy = near["x"] + near["width"] / 2, near["y"] + near["height"] / 2
+                dist = lambda b: abs(b["x"] + b["width"] / 2 - cx) + abs(b["y"] + b["height"] / 2 - cy)
+                cands = sorted((c for c in cands if dist(c[1]) < limit), key=lambda c: dist(c[1]))
+            if cands:
+                el, box = cands[0]
+                el.click(timeout=5000)
+                return box
+            if time.time() > deadline:
+                raise PlaywrightError(f"메뉴에서 '{text_re.pattern}' 를 찾지 못했습니다")
+            time.sleep(0.4)
 
     def download_via_menu(self, key, item_re, dest_dir, name_hint, sub_re=None):
         page = self.page
-        self.hover_menu(key)
+        btn = self.hover_menu(key)
         with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as info:
-            page.get_by_text(item_re).filter(visible=True).first.click()
+            item = self.click_near(item_re, btn)
             if sub_re:
                 # 화질 등을 고르는 작은 메뉴가 더 뜨면 첫 번째 항목 (안 뜨면 그냥 넘어감)
                 try:
-                    page.get_by_text(sub_re).filter(visible=True).first.click(timeout=3000)
+                    self.click_near(sub_re, item, timeout=3)
                 except PlaywrightError:
                     pass
         dl = info.value
@@ -1104,16 +1137,16 @@ class Flow:
         try:
             page.evaluate("""() => { for (const o of [window, Window.prototype]) {
                 try { delete o.showSaveFilePicker; } catch (e) {} } }""")
-            self.hover_menu(key)
+            btn = self.hover_menu(key)
             menu_re = menu_re or re.compile("컬렉션 다운로드|Download collection", re.I)
             kinds = kinds or (".zip",) + IMAGE_EXTS
-            page.get_by_text(menu_re).filter(visible=True).first.click()
+            item = self.click_near(menu_re, btn)
             if sub_re is None and key.startswith("collection"):
                 # 컬렉션 다운로드에서 크기·형식을 고르는 작은 메뉴가 뜨면 원본(가장 큰 것) 쪽을 고른다
                 sub_re = re.compile(r"^\s*(원본|Original|4K|2K|1K|고화질)\b", re.I)
             if sub_re:   # 화질 등을 고르는 작은 메뉴가 더 뜨면 첫 번째 항목 (안 뜨면 그냥 넘어감)
                 try:
-                    page.get_by_text(sub_re).filter(visible=True).first.click(timeout=3000)
+                    self.click_near(sub_re, item, timeout=3)
                 except PlaywrightError:
                     pass
             deadline = time.time() + DOWNLOAD_TIMEOUT_MS / 1000

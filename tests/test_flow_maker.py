@@ -400,3 +400,23 @@ def test_images_one_by_one_when_collection_zip_does_not_start(tmp_path, monkeypa
         browser.close()
     names = sorted(p.name for p in (tmp_path / "1번").glob("*.jpg"))
     assert count == 4 and names == [f"Frozen_lake_{i}_abc00{i:x}.jpg" for i in range(6, 10)]
+
+
+def test_menu_left_on_screen_does_not_download_the_previous_collection(tmp_path, monkeypatch):
+    """예전에 연 메뉴가 화면에 남아 있어도, 방금 누른 [⋮] 옆 메뉴의 [컬렉션 다운로드] 를 누른다
+    (앞 컬렉션을 받거나 같은 그림만 받던 문제)."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    md = tmp_path / "앨범.md"
+    md.write_text(TWO_TRACKS, encoding="utf-8")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1&stalemenu=1")
+        flow_maker.run(md, tmp_path / "out", page=page, confirm=False, n_images=15)
+        collections = page.evaluate("window.collections")
+        browser.close()
+    album = tmp_path / "out" / "앨범" / "이미지"
+    for folder, ids in ((album / "1번", collections[1]), (album / "2번", collections[0])):
+        got = sorted(int(p.stem.split("_")[2]) for p in folder.glob("*.jpg"))
+        assert got == sorted(ids) and len(got) == 15
