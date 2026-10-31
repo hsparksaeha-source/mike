@@ -1092,6 +1092,12 @@ class Flow:
                 cdp = browser.new_browser_cdp_session()
                 cdp.send("Browser.setDownloadBehavior",
                          {"behavior": "allow", "downloadPath": str(collect_dir.resolve()), "eventsEnabled": True})
+                # 크롬이 '여러 파일 자동 다운로드' 를 막으면 컬렉션(zip)이 안 받아진다 → 이 사이트는 허용
+                for origin in ("https://flow.google.com", "https://labs.google"):
+                    try:
+                        cdp.send("Browser.grantPermissions", {"permissions": ["automaticDownloads"], "origin": origin})
+                    except Exception:
+                        pass
                 watch_dirs.insert(0, collect_dir)
         except Exception as e:  # 안 되면 보통 다운로드 폴더만 지켜본다
             log(f"    (다운로드 폴더 지정 실패, 기본 다운로드 폴더를 봅니다: {str(e).splitlines()[0]})")
@@ -1102,6 +1108,9 @@ class Flow:
             menu_re = menu_re or re.compile("컬렉션 다운로드|Download collection", re.I)
             kinds = kinds or (".zip",) + IMAGE_EXTS
             page.get_by_text(menu_re).filter(visible=True).first.click()
+            if sub_re is None and key.startswith("collection"):
+                # 컬렉션 다운로드에서 크기·형식을 고르는 작은 메뉴가 뜨면 원본(가장 큰 것) 쪽을 고른다
+                sub_re = re.compile(r"^\s*(원본|Original|4K|2K|1K|고화질)\b", re.I)
             if sub_re:   # 화질 등을 고르는 작은 메뉴가 더 뜨면 첫 번째 항목 (안 뜨면 그냥 넘어감)
                 try:
                     page.get_by_text(sub_re).filter(visible=True).first.click(timeout=3000)
@@ -1126,7 +1135,15 @@ class Flow:
                 if count and (one_zip and idle > 3 or count >= n_expected and idle > 3 or idle > 60):
                     break
             if not got and not folder_files:
-                raise RuntimeError("컬렉션 다운로드가 시작되지 않았습니다.")
+                # 고칠 때 볼 수 있게 그때 화면과 떠 있던 메뉴 글을 남긴다
+                try:
+                    shot = Path(dest_dir).parent / "_확인화면"
+                    shot.mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=str(shot / f"다운로드실패_{Path(dest_dir).name}.png"))
+                except Exception:
+                    pass
+                raise RuntimeError("컬렉션 다운로드가 시작되지 않았습니다. (메뉴: "
+                                   f"{self._menu_texts() or '없음'}, 화면: _확인화면 폴더)")
             saved = []
             for i, dl in enumerate(got, 1):
                 dest = unique_path(Path(dest_dir), Path(dl.suggested_filename).name or f"image_{i}")
