@@ -2,8 +2,8 @@
 
 기존 'LRC 이중자막 생성기'(영-한 / 한-영) 와 같은 화면이고, 원문이 어느 나라 말이든 된다
 (이탈리아어 칸쏘네, 일본어, 스페인어 …). 원문 언어는 구글 번역이 알아서 찾는다.
-- 다국어 → 한국어: [시간]한국어 번역 / [시간]원문   (한국어가 위)
-- 다국어 → 영어  : [시간]원문 / [시간]영어 번역     (영어가 아래)
+- 다국어 → 한국어: [시간]원문 / [시간]한국어 번역   (원문이 위, 번역이 아래)
+- 다국어 → 영어  : [시간]원문 / [시간]영어 번역
 구글 번역 API 키: google_translate_api_key.txt (이 파일 옆 → 위 폴더 → 바탕화면의 기존 번역기 폴더)
 실행: LRC다국어번역기.bat
 """
@@ -64,14 +64,9 @@ def build_lines(parsed_items, direction):
             out.append(item["original"])
             continue
         ts, orig, trans = item["timestamp"], item["original_text"], item["translated_text"]
-        if direction == "x2ko":       # 한국어(번역) 위, 원문 아래
-            if trans:
-                out.append(f"{ts}{trans}")
-            out.append(f"{ts}{orig}")
-        else:                         # 원문 위, 영어(번역) 아래
-            out.append(f"{ts}{orig}")
-            if trans:
-                out.append(f"{ts}{trans}")
+        out.append(f"{ts}{orig}")     # 원문이 위, 번역(영어·한국어)이 아래
+        if trans:
+            out.append(f"{ts}{trans}")
     return out
 
 
