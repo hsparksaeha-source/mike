@@ -544,6 +544,7 @@ class Flow:
             self.approve()
             if after_approval:
                 if self.approved and not was_approved:
+                    self._scroll_grid(to_top=True)
                     before_keys |= {t["key"] for t in self.tiles(kind)}   # 승인 전에 있던 영상은 제외
                     last_count = -1
                 if (self.question_seen and not self.approved) or (not self.question_seen and time.time() - start < 90):
@@ -565,8 +566,10 @@ class Flow:
                 every = self.tiles()
                 vh = self.page.evaluate("innerHeight")
                 top = {t["key"] for t in every if t["y"] < vh * 1.5}   # 격자를 맨 위로 올렸을 때 화면 안쪽(윗부분)
+                used = getattr(self, "used_videos", set())
                 new = [t for t in every if t["kind"] == "video" and t["key"] in top
-                       and t["key"] not in before_keys and not t["key"].endswith(":")]
+                       and t["key"] not in before_keys and not t["key"].endswith(":")
+                       and t["key"] not in used and caption(t["text"]) not in used]
             else:
                 # 새 그림은 격자 맨 앞에 생긴다 → 맨 앞 몇 칸만 본다 (아래쪽 예전 그림이 다시 그려져 주소가 바뀐 것은 빼려고)
                 self._scroll_grid(to_top=True)
@@ -1650,7 +1653,10 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
     if video:
         save_state(folder, video=video["key"])
         # 영상을 먼저 받는다 (이미지 컬렉션에서 실패해도 영상은 남도록 → 다시 실행할 때 영상을 또 만들지 않음)
-        download_video(flow, video, scene_dir, track.number)
+        try:
+            download_video(flow, video, scene_dir, track.number)
+        except RuntimeError as e:   # 영상이 안 받아져도 이미지는 받는다 (다시 실행하면 영상만 다시)
+            log(f"    !! {e}")
 
     collect_images(flow, images, folder)
     count = sum(f.suffix.lower() in IMAGE_EXTS for f in folder.iterdir())   # 지난번에 받아 둔 것까지
@@ -1669,6 +1675,9 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
     else:
         video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
     log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
+    # 격자를 맨 위로 올리고 지금 있는 칸을 기억한다 (앞 트랙 영상을 이 트랙 새 영상으로 착각하지 않게)
+    flow._scroll_grid(to_top=True)
+    time.sleep(1)
     before_video = {t["key"] for t in flow.tiles()}
     # 격자 맨 앞쪽에서 먼저 찾는다 (같은 제목의 예전 그림이 아래쪽에 많아서)
     found = flow.find_image(source, top=30) or flow.find_image(source)
@@ -1697,6 +1706,9 @@ def make_video(flow, track, folder, scene_dir, source, cast=None, download=True)
         video = flow.wait_new("video", before_video, 1, VIDEO_TIMEOUT_SEC, after_approval=True,
                               refusals_before=refusals_before, on_need_image=answer, need_before=need_before)[0]
         log("  영상 완성")
+        if not hasattr(flow, "used_videos"):
+            flow.used_videos = set()
+        flow.used_videos |= {video["key"]} | ({caption(video.get("text", ""))} - {""})
     except VideoRefused as e:
         # 영상은 싱글곡에만 따로 쓰는 것이라, 거절되면 영상 없이 이미지만 받고 넘어간다
         log(f"  !! {e} 영상은 건너뛰고 이미지만 받습니다.")
@@ -1733,6 +1745,12 @@ def download_video(flow, video, scene_dir, number):
         if sniff_ext(path) not in (".mp4", ".webm"):
             path.unlink(missing_ok=True)
             raise RuntimeError("영상 파일이 제대로 받아지지 않았습니다. Flow 에서 직접 받아 주세요.")
+    # 다른 트랙 영상과 똑같은 파일이면 (영상이 늦게 나와 앞 트랙 것을 받은 경우) 지우고 실패로 → 다시 실행하면 영상만 다시
+    digest = _digest(path)
+    for other in scene_dir.iterdir():
+        if other != path and other.suffix.lower() in VIDEO_EXTS and _digest(other) == digest:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(f"받은 영상이 {other.name} 과 똑같습니다 (새 영상이 아직 안 나온 듯). 다시 실행하면 영상만 다시 만듭니다.")
     log(f"    받음: 장면\\{path.name} ({path.stat().st_size // 1024:,}KB)")
 
 
