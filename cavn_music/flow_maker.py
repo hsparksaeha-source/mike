@@ -57,6 +57,7 @@ LYRIC_IMAGE_REQUEST = "캐릭터({names})를 주인공으로 가사에 맞게 16
 LYRIC_VIDEO_REQUEST = "이 이미지로 가사에 맞게 영상을 만들어 주세요."
 PROMPT_PLACEHOLDER = "무엇을 만들고 싶으신가요?"
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+ONE_BY_ONE_FIRST = True   # 이미지를 한 장씩 먼저 받는다 (안 되면 컬렉션 zip)
 NEW_GRACE_SEC = 8   # 보낸 뒤 이 초 안에 '새로' 보이는 칸은 Flow 가 만든 것일 수 없음 → 예전 칸으로 본다
 VIDEO_EXTS = (".mp4", ".mov", ".webm")
 
@@ -1034,7 +1035,7 @@ class Flow:
         time.sleep(0.8)
         return btn
 
-    def click_near(self, text_re, near, timeout=None, limit=450):
+    def click_near(self, text_re, near, timeout=None, limit=450, first=False):
         """text_re 글이 있는 항목 중 near(방금 누른 단추) 에 가장 가까운 것을 누른다.
         (Flow 는 예전에 연 메뉴를 화면 어딘가에 남겨 둘 때가 있어서, '처음 보이는 것' 을 누르면
         앞 컬렉션·다른 그림의 메뉴를 누르게 된다 → 컬렉션이 안 받아지고 같은 그림만 받아지던 문제)"""
@@ -1054,6 +1055,8 @@ class Flow:
                 cx, cy = near["x"] + near["width"] / 2, near["y"] + near["height"] / 2
                 dist = lambda b: abs(b["x"] + b["width"] / 2 - cx) + abs(b["y"] + b["height"] / 2 - cy)
                 cands = sorted((c for c in cands if dist(c[1]) < limit), key=lambda c: dist(c[1]))
+            if first:   # 크기 고르는 작은 메뉴: 맨 위 항목(원본 크기). 아래쪽은 업스케일(시간·크레딧)이라 안 누름
+                cands.sort(key=lambda c: (not re.search(r"원본|original", c[0].inner_text() or "", re.I), c[1]["y"], c[1]["x"]))
             if cands:
                 el, box = cands[0]
                 el.click(timeout=5000)
@@ -1070,7 +1073,7 @@ class Flow:
             if sub_re:
                 # 화질 등을 고르는 작은 메뉴가 더 뜨면 첫 번째 항목 (안 뜨면 그냥 넘어감)
                 try:
-                    self.click_near(sub_re, item, timeout=3)
+                    self.click_near(sub_re, item, timeout=3, first=True)
                 except PlaywrightError:
                     pass
         dl = info.value
@@ -1146,7 +1149,7 @@ class Flow:
                 sub_re = re.compile(r"^\s*(원본|Original|4K|2K|1K|고화질)\b", re.I)
             if sub_re:   # 화질 등을 고르는 작은 메뉴가 더 뜨면 첫 번째 항목 (안 뜨면 그냥 넘어감)
                 try:
-                    self.click_near(sub_re, item, timeout=3)
+                    self.click_near(sub_re, item, timeout=3, first=True)
                 except PlaywrightError:
                     pass
             deadline = time.time() + DOWNLOAD_TIMEOUT_MS / 1000
@@ -1408,8 +1411,17 @@ def dump_tiles(flow, folder):
 
 
 def collect_images(flow, images, folder):
-    """새 컬렉션에 이미지를 넣고 컬렉션 다운로드 → folder 에 이미지 저장. 받은 장수를 돌려준다."""
+    """방금 만든 이미지를 folder 에 저장한다. 받은 장수를 돌려준다.
+    먼저 격자 맨 앞의 새 이미지를 한 장씩 [⋮] → [다운로드] 로 받는다 (영상과 같은 방법).
+    다 못 받으면 예전처럼 새 컬렉션에 넣고 컬렉션 다운로드(zip).
+    (새 프로젝트에서는 컬렉션 zip 이 안 받아지고, 컬렉션에 넣은 그림은 격자에서 사라져서 순서를 바꿈)"""
     folder.mkdir(parents=True, exist_ok=True)
+    got = download_one_by_one(flow, len(images), folder) if ONE_BY_ONE_FIRST else 0
+    if got >= len(images):
+        log(f"    이미지 {got}장 저장 → {folder}")
+        return got
+    if got:
+        log(f"    !! 한 장씩 받기로 {got}장만 받아서, 나머지는 컬렉션으로 받습니다")
     log("  새 컬렉션 만들고 이미지 넣기")
     flow.new_collection()
     # 그림 주소는 만든 뒤에 바뀔 수 있어서, 주소로 못 찾으면 그림 제목(Flow 가 붙인 이름)으로 찾는다.
@@ -1494,25 +1506,37 @@ def collect_images(flow, images, folder):
             else:
                 count += 1
     except RuntimeError as e:
-        # 컬렉션(zip)이 안 받아지면: 방금 만든 그림(격자 맨 앞)을 한 장씩 [⋮] → [다운로드] 로 받는다
         log(f"    !! {str(e).splitlines()[0]}")
-        count = download_one_by_one(flow, added, folder)
+    count += got
     log(f"    이미지 {count}장 저장 → {folder}")
     return count
 
 
+def _digest(path):
+    import hashlib
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
 def download_one_by_one(flow, n, folder):
-    log(f"    컬렉션 대신 이미지 {n}장을 한 장씩 받습니다")
+    log(f"  이미지 {n}장을 한 장씩 받기 (격자 맨 앞의 새 이미지)")
     flow._scroll_grid(to_top=True)
     time.sleep(1)
     keys = [t["key"] for t in flow.tiles("image")[:n]]
+    seen = {_digest(f) for f in folder.iterdir() if f.suffix.lower() in IMAGE_EXTS}
     count = 0
     menu = re.compile(r"^\s*(file_download|download)?\s*(다운로드|Download)\s*$", re.I)
     size = re.compile(r"^\s*(원본|Original|4K|2K|1K)\b", re.I)
     for i, key in enumerate(keys, 1):
         try:
             got = flow.download_collection(key, folder, 1, menu_re=menu, sub_re=size, kinds=IMAGE_EXTS, start_timeout=60)
-            count += len(got)
+            for f in got:   # 같은 그림을 또 받았으면 버린다
+                d = _digest(f)
+                if d in seen:
+                    f.unlink(missing_ok=True)
+                    log(f"      ({i}번째: 이미 받은 그림이라 버림)")
+                else:
+                    seen.add(d)
+                    count += 1
         except (RuntimeError, PlaywrightError) as e:
             log(f"      !! {i}번째 이미지 받기 실패: {str(e).splitlines()[0]}")
         if i % 5 == 0:

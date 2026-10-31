@@ -24,6 +24,7 @@ TWO_TRACKS = EASY_MD.replace("# PART B.", EASY_MD[EASY_MD.index("## Track 1."):E
 
 @pytest.mark.parametrize("zip_mode", ["1", "0"])
 def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
+    monkeypatch.setattr(flow_maker, "ONE_BY_ONE_FIRST", False)   # 컬렉션 zip 으로 받는 길을 시험
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")   # 실제 다운로드 폴더는 안 봄
     md = tmp_path / "낭만오케스트라3집.md"
     md.write_text(TWO_TRACKS, encoding="utf-8")
@@ -68,6 +69,7 @@ def test_flow_two_tracks(tmp_path, zip_mode, monkeypatch):
 
 
 def test_reuse_existing_images(tmp_path, monkeypatch):
+    monkeypatch.setattr(flow_maker, "ONE_BY_ONE_FIRST", False)   # 컬렉션 zip 으로 받는 길을 시험
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
     """이미지 15장이 이미 Flow 맨 앞에 있으면, 새로 만들지 않고 그 이미지로 영상·컬렉션만 한다."""
     from md_parser import parse_md
@@ -296,6 +298,7 @@ def test_two_tracks_when_addresses_keep_changing(tmp_path, monkeypatch):
     - 이미지는 제목으로 찾아 트랙마다 자기 그림 15장만 넣는다 (다른 트랙 그림·같은 그림 두 번 없음)
     - 예전 영상을 새 영상으로 착각하지 않는다 (7번에 3번 영상이 들어가던 문제)
     - [승인] 칸이 안 보이면 보내기(→) 화살표로 승인한다"""
+    monkeypatch.setattr(flow_maker, "ONE_BY_ONE_FIRST", False)   # 컬렉션 zip 으로 받는 길을 시험
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
     md = tmp_path / "앨범.md"
     md.write_text(TWO_TRACKS, encoding="utf-8")
@@ -348,6 +351,7 @@ def test_video_only_when_images_already_saved(tmp_path, monkeypatch):
 def test_collect_without_titles_checks_collection_count(tmp_path, monkeypatch, extra):
     """그림 제목도 못 읽고 주소도 넣을 때마다 바뀌어도, 컬렉션 칸의 숫자로 확인하며 같은 그림을 두 번 넣지 않는다.
     (넣은 그림이 격자에서 사라지는 경우도)"""
+    monkeypatch.setattr(flow_maker, "ONE_BY_ONE_FIRST", False)   # 컬렉션 zip 으로 받는 길을 시험
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
     with sync_playwright() as pw:
         browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
@@ -405,6 +409,7 @@ def test_images_one_by_one_when_collection_zip_does_not_start(tmp_path, monkeypa
 def test_menu_left_on_screen_does_not_download_the_previous_collection(tmp_path, monkeypatch):
     """예전에 연 메뉴가 화면에 남아 있어도, 방금 누른 [⋮] 옆 메뉴의 [컬렉션 다운로드] 를 누른다
     (앞 컬렉션을 받거나 같은 그림만 받던 문제)."""
+    monkeypatch.setattr(flow_maker, "ONE_BY_ONE_FIRST", False)   # 컬렉션 zip 으로 받는 길을 시험
     monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
     md = tmp_path / "앨범.md"
     md.write_text(TWO_TRACKS, encoding="utf-8")
@@ -420,3 +425,23 @@ def test_menu_left_on_screen_does_not_download_the_previous_collection(tmp_path,
     for folder, ids in ((album / "1번", collections[1]), (album / "2번", collections[0])):
         got = sorted(int(p.stem.split("_")[2]) for p in folder.glob("*.jpg"))
         assert got == sorted(ids) and len(got) == 15
+
+
+def test_two_tracks_images_one_by_one(tmp_path, monkeypatch):
+    """기본: 이미지를 컬렉션에 넣기 전에 격자 맨 앞에서 한 장씩 받는다. 트랙마다 자기 그림 15장."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    md = tmp_path / "앨범.md"
+    md.write_text(TWO_TRACKS, encoding="utf-8")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&nozip=1&stalemenu=1")
+        flow_maker.run(md, tmp_path / "out", page=page, confirm=False, n_images=15)
+        requests = page.evaluate("window.requests")
+        browser.close()
+    album = tmp_path / "out" / "앨범"
+    first = sorted(int(p.stem.split("_")[2]) for p in (album / "이미지" / "1번").glob("*.jpg"))
+    second = sorted(int(p.stem.split("_")[2]) for p in (album / "이미지" / "2번").glob("*.jpg"))
+    assert first == list(range(3, 18)) and len(second) == 15 and min(second) > max(first)
+    assert [bool(r["attachment"]) for r in requests] == [False, True, False, True]
