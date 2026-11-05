@@ -5,6 +5,8 @@
   [칸쏘네]
   여: 쥴리, 안나
   남: 마태오, 브루노
+[인물 설명] 칸에 '이름: 설명' 을 적어 두면 (예: 쥴리: 키 185cm 의 큰 키)
+이미지·영상 요청 글에 붙여서 Flow 가 꼭 그대로 그리게 한다.
 곡마다 주인공은
   1) md 의 '## 주인공 캐릭터' 칸
   2) 없으면 곡의 남·여 가수 표시 (여성 → 첫 여자, 남성 → 첫 남자, 둘 다/모름 → 첫 여자 + 첫 남자)
@@ -16,6 +18,7 @@ from pathlib import Path
 
 CAST_FILE = Path(__file__).resolve().parent / "캐릭터목록.txt"
 DEFAULT_PROJECT = "캐릭터목록"
+TRAITS_SECTION = re.compile(r"^(인물\s*설명|설명|키)$")
 
 
 def load_cast(path=None):
@@ -37,12 +40,57 @@ def load_cast(path=None):
         m = re.match(r"^\[(.+)\]$", line)
         if m:
             cur = m.group(1).strip()
+            if TRAITS_SECTION.match(cur):   # [인물 설명] 은 묶음이 아님
+                cur = None
+                continue
             groups[cur] = {"여": [], "남": []}
             continue
         m = re.match(r"^(여|남)\s*[:：]\s*(.*)$", line)
         if m and cur:
             groups[cur][m.group(1)] += [n.strip() for n in re.split(r"[,，、]", m.group(2)) if n.strip()]
     return project, groups
+
+
+def load_traits(path=None):
+    """[인물 설명] 칸 → {이름: 설명}. 예) 쥴리: 키 185cm 의 큰 키"""
+    path = path or CAST_FILE
+    traits, inside = {}, False
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except OSError:
+        return traits
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^\[(.+)\]$", line)
+        if m:
+            inside = bool(TRAITS_SECTION.match(m.group(1).strip()))
+            continue
+        m = re.match(r"^([^:：]+?)\s*[:：]\s*(.+)$", line)
+        if inside and m:
+            traits[m.group(1).strip()] = m.group(2).strip()
+    return traits
+
+
+def _topic(name):
+    """'쥴리' → '쥴리는', '서준' → '서준은'."""
+    last = name[-1]
+    batchim = "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0
+    return name + ("은" if batchim else "는")
+
+
+def traits_text(names, traits=None, what="이미지"):
+    """주인공들의 [인물 설명] → 요청 글에 붙일 문장. 설명이 없으면 ''.
+    Flow 캐릭터 설명만으로는 키를 무시할 때가 많아서, 사용자가 직접 쓰던 말 그대로 프롬프트에 넣는다:
+    '안나 키 185센티미터의 큰 키, 브루노 키 195센티미터의 큰 키, 이 키를 그대로 반영해서 이미지를 만들어 주세요.'"""
+    traits = load_traits() if traits is None else traits
+    parts = [f"{n} {traits[n]}" for n in names if traits.get(n)]
+    if not parts:
+        return ""
+    last = what[-1]
+    obj = "을" if "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0 else "를"
+    return ", ".join(parts) + f", 이 키를 그대로 반영해서 {what}{obj} 만들어 주세요."
 
 
 def lead_kind(track):

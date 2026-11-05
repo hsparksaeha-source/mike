@@ -1621,9 +1621,16 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
             raise RuntimeError(f"Flow 화면에 이미지가 {len(images)}장뿐이라 기존 이미지를 쓸 수 없습니다.")
         log(f"  Flow 화면 맨 앞의 기존 이미지 {len(images)}장을 씁니다 (새로 만들지 않음)")
     elif cast:
-        from cast import join_names
-        images = request_images(flow, lyric_prompt(track), n_images,
-                                request=LYRIC_IMAGE_REQUEST.format(names=join_names(cast)),
+        from cast import join_names, traits_text
+        request = LYRIC_IMAGE_REQUEST.format(names=join_names(cast))
+        prompt = lyric_prompt(track)
+        traits = traits_text(cast)   # 캐릭터목록.txt 의 [인물 설명] (키 등)
+        if traits:
+            # Flow 가 키를 무시하지 않도록 프롬프트 맨 앞과 맨 끝, 두 번 강조한다
+            log(f"  인물 설명: {traits}")
+            prompt = f"{traits}\n\n{prompt}"
+            request += "\n" + traits.replace("{", "{{").replace("}", "}}")
+        images = request_images(flow, prompt, n_images, request=request,
                                 characters=cast, project=project)
     else:
         images = request_images(flow, track.image_prompt, n_images)
@@ -1671,7 +1678,9 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
 def make_video(flow, track, folder, scene_dir, source, cast=None, download=True):
     """source 이미지를 프롬프트 칸에 끌어다 놓고 영상을 요청한다. 거절되면 None."""
     if cast:
-        video_text = f"{lyric_prompt(track)}\n\n{LYRIC_VIDEO_REQUEST}"
+        from cast import traits_text
+        traits = traits_text(cast, what="영상")
+        video_text = f"{lyric_prompt(track)}\n\n{LYRIC_VIDEO_REQUEST}" + (f"\n{traits}" if traits else "")
     else:
         video_text = f"{track.video_prompt or track.image_prompt}\n\n{VIDEO_REQUEST}"
     log("  이 트랙 이미지 한 장을 프롬프트 칸에 끌어다 놓고 영상 요청")
