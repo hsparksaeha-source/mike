@@ -83,14 +83,16 @@ def _topic(name):
 def traits_text(names, traits=None, what="이미지"):
     """주인공들의 [인물 설명] → 요청 글에 붙일 문장. 설명이 없으면 ''.
     Flow 캐릭터 설명만으로는 키를 무시할 때가 많아서, 사용자가 직접 쓰던 말 그대로 프롬프트에 넣는다:
-    '안나 키 185센티미터의 큰 키, 브루노 키 195센티미터의 큰 키, 이 키를 그대로 반영해서 이미지를 만들어 주세요.'"""
+    '안나 키 185센티미터의 큰 키, 브루노 키 195센티미터의 큰 키, 이 키를 그대로 반영해서 가사에 맞게 이미지 15장 만들어 주세요.'"""
     traits = load_traits() if traits is None else traits
     parts = [f"{n} {traits[n]}" for n in names if traits.get(n)]
     if not parts:
         return ""
     last = what[-1]
     obj = "을" if "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0 else "를"
-    return ", ".join(parts) + f", 이 키를 그대로 반영해서 {what}{obj} 만들어 주세요."
+    if re.search(r"\d+장$", what):   # '이미지 15장 만들어 주세요' (사용자가 쓰던 말 그대로)
+        return ", ".join(parts) + f", 이 키를 그대로 반영해서 가사에 맞게 {what} 만들어 주세요."
+    return ", ".join(parts) + f", 이 키를 그대로 반영해서 가사에 맞게 {what}{obj} 만들어 주세요."
 
 
 def lead_kind(track):

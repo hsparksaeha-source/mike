@@ -26,8 +26,8 @@ def test_traits_are_not_a_group_and_go_into_requests(tmp_path):
     assert list(groups) == ["칸쏘네1"]
     traits = cast.load_traits(f)
     assert traits == {"쥴리": "키 185센티미터의 큰 키", "마태오": "키 195센티미터의 큰 키"}
-    assert cast.traits_text(["쥴리", "마태오"], traits) == (
-        "쥴리 키 185센티미터의 큰 키, 마태오 키 195센티미터의 큰 키, 이 키를 그대로 반영해서 이미지를 만들어 주세요.")
+    assert cast.traits_text(["쥴리", "마태오"], traits, what="이미지 15장") == (
+        "쥴리 키 185센티미터의 큰 키, 마태오 키 195센티미터의 큰 키, 이 키를 그대로 반영해서 가사에 맞게 이미지 15장 만들어 주세요.")
     assert cast.traits_text(["마태오"], traits, what="영상").endswith("영상을 만들어 주세요.")
     assert cast.traits_text(["서준"], traits) == ""
 

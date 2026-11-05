@@ -1624,7 +1624,7 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         from cast import join_names, traits_text
         request = LYRIC_IMAGE_REQUEST.format(names=join_names(cast))
         prompt = lyric_prompt(track)
-        traits = traits_text(cast)   # 캐릭터목록.txt 의 [인물 설명] (키 등)
+        traits = traits_text(cast, what=f"이미지 {n_images}장")   # 캐릭터목록.txt 의 [인물 설명] (키 등)
         if traits:
             # Flow 가 키를 무시하지 않도록 프롬프트 맨 앞과 맨 끝, 두 번 강조한다
             log(f"  인물 설명: {traits}")
