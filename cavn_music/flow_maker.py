@@ -1777,13 +1777,16 @@ def connect(pw):
     if "/project/" not in page.url:
         page.goto(FLOW_URL, wait_until="domcontentloaded")
         print("\n크롬에서 Flow 에 로그인하고, 작업할 프로젝트를 열어 주세요 (새 프로젝트도 됨).")
-        input("프로젝트 화면(전체 미디어)이 보이면 Enter 를 누르세요... ")
-        # 프로젝트를 다른 탭에서 열었을 수도 있으니, 프로젝트가 열린 탭을 다시 찾는다
-        projects = [p for p in context.pages if "flow.google" in p.url and "/project/" in p.url]
-        if projects:
-            page = projects[-1]
-        if "/project/" not in page.url:
-            print("!! 프로젝트가 열린 탭을 찾지 못했습니다. 지금 탭에서 그대로 진행합니다.")
+        while True:
+            input("프로젝트 화면(전체 미디어)이 보이면 Enter 를 누르세요... ")
+            # 프로젝트를 다른 탭에서 열었을 수도 있으니, 프로젝트가 열린 탭을 다시 찾는다
+            projects = [p for p in context.pages if "flow.google" in p.url and "/project/" in p.url]
+            if projects:
+                page = projects[-1]
+                break
+            # Flow 첫 화면(프로젝트 목록)에서는 프롬프트 칸이 없어서 모든 트랙이 실패한다 → 열릴 때까지 다시 묻는다
+            print("!! 아직 Flow 프로젝트가 열려 있지 않습니다 (주소에 /project/ 가 없음).")
+            print("   Flow 첫 화면에서 프로젝트 하나를 눌러 열거나 [새 프로젝트]를 만든 뒤 Enter 를 누르세요.")
         page.bring_to_front()
     log(f"작업 탭: {page.url}")
     return page
