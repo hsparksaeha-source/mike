@@ -2,7 +2,7 @@
 
 - 질문은 처음에 한 번에 다 묻고, 그다음에는 사람 손 없이 끝까지 간다 (나중에 예약 실행하기 쉽게).
 - 노래(CAVN)      : 모든 md
-- 이미지·영상(Flow): 경음악·클래식(이미지 프롬프트), 가요·칸쏘네(주인공 캐릭터 + 가사). 미사곡은 건너뜀
+- 이미지·영상(Flow): 경음악·클래식(이미지 프롬프트), 가요·칸쏘네(주인공 캐릭터 + 가사). 미사곡·사크리드처럼 가사와 곡마다 이미지 프롬프트가 함께 있으면 이미지 프롬프트로
 - 썸네일          : md 에 썸네일 문구가 있으면
 - 한 단계가 실패해도 다음 단계·다음 md 로 넘어가고, 마지막에 실패한 것만 모아서 알려 준다.
   다시 실행하면 끝난 곡·트랙·썸네일은 건너뛰고 남은 것만 한다.
@@ -67,11 +67,11 @@ class Plan:
         self.md = md
         self.tracks = parse_md_file(md)
         self.instrumental = bool(self.tracks) and all(t.classical for t in self.tracks)
-        # 이미지·영상: 경음악·클래식은 이미지 프롬프트로, 가요·칸쏘네는 주인공 캐릭터 + 가사로
-        # (미사곡처럼 가사도 있고 곡마다 이미지 프롬프트도 있는 md 는 하지 않음)
+        # 이미지·영상: 곡마다 이미지 프롬프트가 있으면 그 프롬프트로 (경음악·클래식·사크리드·미사곡 등),
+        # 없고 가사만 있으면(가요·칸쏘네) 주인공 캐릭터 + 가사로
         self.lyric_images = (not self.instrumental and not any(t.image_prompt for t in self.tracks)
                              and any(t.lyrics for t in self.tracks))
-        self.images = (self.instrumental and any(t.image_prompt for t in self.tracks)) or self.lyric_images
+        self.images = any(t.image_prompt for t in self.tracks) or self.lyric_images
         self.cast_group = None
         self.videos = True   # False 면 Flow 에서 영상은 만들지 않고 이미지만
         self.thumbs = thumb_maker.parse_thumbnails(md.read_text(encoding="utf-8-sig"))
@@ -148,8 +148,6 @@ def main():
         print(f"\n{i}. {md.name}")
         print(f"  종류: {plan.kind}, {len(plan.tracks)}곡")
         print(f"  할 일: {' → '.join(steps)}")
-        if not plan.instrumental and not plan.images:
-            print("  (곡마다 이미지 프롬프트가 있는 가사 곡(미사곡 등)이라 이미지·영상은 하지 않습니다)")
         plan.master = args.master if args.master is not None else ask_master(plan)
         if plan.lyric_images:
             # 가요·칸쏘네: 캐릭터 묶음을 지금 고른다 (곡마다 주인공은 md 의 '주인공 캐릭터' 칸 또는 남·여 가수 표시로)

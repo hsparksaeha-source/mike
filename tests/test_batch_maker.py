@@ -33,7 +33,7 @@ def test_batch_runs_steps_in_order(tmp_path, monkeypatch):
 
     def flow_run(md, out, **kw):
         calls.append(("이미지", Path(md).stem))
-        assert kw.get("cast_group") == (None if "경음악" in str(md) else "칸쏘네")
+        assert kw.get("cast_group") == ("칸쏘네" if "카페" in str(md) else None)
         assert kw.get("videos") is False   # 맨 처음에 '영상 안 만듦' 을 골랐음 (모든 md 에 똑같이)
         raise RuntimeError("Flow 가 멈춤")          # 실패해도 다음 단계로
     monkeypatch.setattr(batch_maker.flow_maker, "run", flow_run)
@@ -51,7 +51,7 @@ def test_batch_runs_steps_in_order(tmp_path, monkeypatch):
         ("Flow 확인",),
         ("노래", "경음악3집", 0, False), ("이미지", "경음악3집"), ("썸네일", "경음악3집"),
         ("노래", "카페소네트", 1, False), ("이미지", "카페소네트"),   # 가요: 캐릭터 + 가사로 이미지, 썸네일 문구 없음
-        ("노래", "미사곡5집", 0, False),                        # 미사곡: 가사 있어서 이미지 안 함
+        ("노래", "미사곡5집", 0, False), ("이미지", "미사곡5집"),   # 미사곡·사크리드: 곡마다 이미지 프롬프트로 이미지·영상
     ]
     log = (tmp_path / "out" / "경음악3집" / "일괄작업기록.txt").read_text(encoding="utf-8")
     assert "이미지·영상 실패: Flow 가 멈춤" in log and "썸네일 끝" in log
