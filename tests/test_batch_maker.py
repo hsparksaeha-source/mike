@@ -34,14 +34,14 @@ def test_batch_runs_steps_in_order(tmp_path, monkeypatch):
     def flow_run(md, out, **kw):
         calls.append(("이미지", Path(md).stem))
         assert kw.get("cast_group") == (None if "경음악" in str(md) else "칸쏘네")
-        assert kw.get("videos") == ("경음악" not in str(md))   # 경음악은 '영상 안 만듦' 을 골랐음
+        assert kw.get("videos") is False   # 맨 처음에 '영상 안 만듦' 을 골랐음 (모든 md 에 똑같이)
         raise RuntimeError("Flow 가 멈춤")          # 실패해도 다음 단계로
     monkeypatch.setattr(batch_maker.flow_maker, "run", flow_run)
     monkeypatch.setattr(batch_maker.thumb_maker, "run", lambda md, out, **kw: calls.append(("썸네일", Path(md).stem)))
     monkeypatch.setattr(batch_maker, "prepare_flow", lambda: calls.append(("Flow 확인",)))
-    # 경음악: 마스터링 Enter(안 함), 영상 n(이미지만) / 가요: 마스터링 Enter(함), 영상 Enter(만듦), 캐릭터 묶음 1
-    # 미사곡: 마스터링 n (이미지 안 하므로 영상 질문 없음) / 시작 y
-    answers = iter(["", "n", "", "", "1", "n", "y"])
+    # 맨 처음 영상 n(이미지만) / 경음악: 마스터링 Enter(안 함) / 가요: 마스터링 Enter(함), 캐릭터 묶음 1
+    # 미사곡: 마스터링 n / 시작 y
+    answers = iter(["n", "", "", "1", "n", "y"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     monkeypatch.setattr(sys, "argv", ["batch_maker.py", str(easy), str(pop), str(sacred), "--out", str(tmp_path / "out")])
 

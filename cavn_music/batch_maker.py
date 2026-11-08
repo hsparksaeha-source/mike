@@ -120,7 +120,7 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"저장 폴더 (기본 {DEFAULT_OUT})")
     ap.add_argument("--master", type=int, choices=[0, 1], help="모든 md 의 마스터링 0=안 함, 1=함 (안 주면 md 마다 물어봄)")
     ap.add_argument("--yes", action="store_true", help="'시작할까요?' 를 묻지 않고 바로 시작")
-    ap.add_argument("--no-video", action="store_true", help="Flow 에서 영상은 만들지 않고 이미지만 (안 주면 md 마다 물어봄)")
+    ap.add_argument("--no-video", action="store_true", help="Flow 에서 영상은 만들지 않고 이미지만 (안 주면 처음에 한 번 물어봄)")
     ap.add_argument("--cast", help="가요·칸쏘네 md 의 캐릭터 묶음 이름 (캐릭터목록.txt 의 [묶음], 안 주면 물어봄)")
     args = ap.parse_args()
 
@@ -129,12 +129,18 @@ def main():
         print("할 md 파일이 없습니다.")
         return
 
+    # 영상을 만들지는 맨 처음에 한 번만 묻는다 (이미지·영상을 만드는 md 가 하나라도 있을 때, 모든 md 에 똑같이)
+    all_plans = [Plan(md) for md in files]
+    videos = True
+    if any(p.images for p in all_plans):
+        videos = False if args.no_video else flow_maker.ask_videos()
+
     print("\n================================================")
     print(f"  일괄 작업: md {len(files)}개")
     print("================================================")
     plans = []
-    for i, md in enumerate(files, 1):
-        plan = Plan(md)
+    for i, (md, plan) in enumerate(zip(files, all_plans), 1):
+        plan.videos = videos
         if not plan.tracks:
             print(f"\n{i}. {md.name}\n  !! 곡을 찾지 못해 뺍니다")
             continue
@@ -145,8 +151,6 @@ def main():
         if not plan.instrumental and not plan.images:
             print("  (곡마다 이미지 프롬프트가 있는 가사 곡(미사곡 등)이라 이미지·영상은 하지 않습니다)")
         plan.master = args.master if args.master is not None else ask_master(plan)
-        if plan.images:
-            plan.videos = False if args.no_video else flow_maker.ask_videos()
         if plan.lyric_images:
             # 가요·칸쏘네: 캐릭터 묶음을 지금 고른다 (곡마다 주인공은 md 의 '주인공 캐릭터' 칸 또는 남·여 가수 표시로)
             from cast import ask_group, load_cast
