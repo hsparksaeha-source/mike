@@ -1774,6 +1774,10 @@ def download_video(flow, video, scene_dir, number):
 
 # ---------------------------------------------------------------- 실행
 
+def _is_flow(url):
+    return "flow.google" in url or "labs.google" in url and "/flow" in url
+
+
 def connect(pw):
     cdp = start_real_chrome(PROFILE_DIR, DEBUG_PORT)
     if not cdp:
@@ -1781,21 +1785,31 @@ def connect(pw):
     browser = pw.chromium.connect_over_cdp(cdp)
     context = browser.contexts[0] if browser.contexts else browser.new_context()
     # CAVN·Flow 가 같은 크롬을 쓰므로 이 사이트 탭을 찾아 쓰고, 없으면 새 탭
-    page = next((p for p in context.pages if "flow.google" in p.url), None) or context.new_page()
+    page = next((p for p in context.pages if _is_flow(p.url)), None) or context.new_page()
     page.bring_to_front()
     if "/project/" not in page.url:
         page.goto(FLOW_URL, wait_until="domcontentloaded")
         print("\n크롬에서 Flow 에 로그인하고, 작업할 프로젝트를 열어 주세요 (새 프로젝트도 됨).")
+        print("(프로그램이 띄운 크롬 창에서 열어야 합니다. 평소 쓰는 다른 크롬 창은 프로그램이 보지 못합니다.)")
         while True:
-            input("프로젝트 화면(전체 미디어)이 보이면 Enter 를 누르세요... ")
-            # 프로젝트를 다른 탭에서 열었을 수도 있으니, 프로젝트가 열린 탭을 다시 찾는다
-            projects = [p for p in context.pages if "flow.google" in p.url and "/project/" in p.url]
+            ans = input("프로젝트 화면(전체 미디어)이 보이면 Enter 를 누르세요 (프로젝트 주소를 붙여 넣어도 됨): ").strip().strip('"')
+            if "/project/" in ans:   # 주소를 붙여 넣으면 이 창에서 그 프로젝트를 연다
+                try:
+                    page.goto(ans if ans.startswith("http") else "https://" + ans, wait_until="domcontentloaded")
+                    time.sleep(3)
+                except PlaywrightError as e:
+                    print(f"!! 그 주소를 열지 못했습니다: {str(e).splitlines()[0]}")
+            # 프로젝트를 다른 탭(다른 창)에서 열었을 수도 있으니, 프로젝트가 열린 탭을 다시 찾는다
+            pages = [p for c in browser.contexts for p in c.pages]
+            projects = [p for p in pages if _is_flow(p.url) and "/project/" in p.url]
             if projects:
                 page = projects[-1]
                 break
             # Flow 첫 화면(프로젝트 목록)에서는 프롬프트 칸이 없어서 모든 트랙이 실패한다 → 열릴 때까지 다시 묻는다
             print("!! 아직 Flow 프로젝트가 열려 있지 않습니다 (주소에 /project/ 가 없음).")
-            print("   Flow 첫 화면에서 프로젝트 하나를 눌러 열거나 [새 프로젝트]를 만든 뒤 Enter 를 누르세요.")
+            print("   프로그램이 지금 보고 있는 탭: " + (", ".join(p.url[:60] for p in pages) or "없음"))
+            print("   이 크롬 창의 Flow 첫 화면에서 프로젝트를 눌러 열거나, 프로젝트 주소(flow.google.com/project/...)를")
+            print("   복사해서 여기에 붙여 넣고 Enter 를 누르세요.")
         page.bring_to_front()
     log(f"작업 탭: {page.url}")
     return page
