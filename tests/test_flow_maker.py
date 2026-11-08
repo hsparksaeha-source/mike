@@ -445,3 +445,25 @@ def test_two_tracks_images_one_by_one(tmp_path, monkeypatch):
     second = sorted(int(p.stem.split("_")[2]) for p in (album / "이미지" / "2번").glob("*.jpg"))
     assert first == list(range(3, 18)) and len(second) == 15 and min(second) > max(first)
     assert [bool(r["attachment"]) for r in requests] == [False, True, False, True]
+
+
+def test_images_only_without_video(tmp_path, monkeypatch):
+    """'영상 안 만들기' 를 고르면 영상 요청 없이 이미지만 받고, 영상이 없어도 끝난 트랙으로 본다."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    md = tmp_path / "앨범.md"
+    md.write_text(EASY_MD, encoding="utf-8")
+    out = tmp_path / "out"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1")
+        flow_maker.run(md, out, page=page, confirm=False, n_images=15, videos=False)
+        requests = page.evaluate("window.requests")
+        browser.close()
+    assert [bool(r["attachment"]) for r in requests] == [False]          # 이미지 요청만
+    folder = out / "앨범" / "이미지" / "1번"
+    assert len(list(folder.glob("*.jpg"))) == 15
+    assert not (out / "앨범" / "장면").exists() or not list((out / "앨범" / "장면").iterdir())
+    assert flow_maker.track_done(folder, out / "앨범" / "장면", 1, 15, need_video=False)
+    assert not flow_maker.track_done(folder, out / "앨범" / "장면", 1, 15)

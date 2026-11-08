@@ -23,12 +23,12 @@
 
 각 주제마다:
   - 노래 2곡을 이어붙여 하나의 오디오로 만들고
-  - 그 주제의 이미지들을 (반복 순환하며) 5초씩 전환 효과로 계속 연결해서
+  - 그 주제의 이미지들을 (반복 순환하며) 10초씩 전환 효과로 계속 연결해서
     두 곡 합친 길이를 끝까지 채웁니다.
   - <입력폴더>/CapCut Drafts/ 안에 초안을 저장합니다 (초안 이름 = 첫 곡 제목).
 
 사용법:
-  python capcut_assemble_classical.py <입력폴더> [출력폴더] [초당 이미지길이=5] [그룹경계 간격(초)=120]
+  python capcut_assemble_classical.py <입력폴더> [출력폴더] [초당 이미지길이=10] [그룹경계 간격(초)=120]
 """
 
 import os
@@ -43,7 +43,7 @@ from pycapcut.metadata.effect_meta import TransitionMeta
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".wmv")
 MEDIA_EXTS = IMAGE_EXTS + VIDEO_EXTS
-DEFAULT_IMAGE_SEC = 5
+DEFAULT_IMAGE_SEC = 10   # 이미지 한 장을 보여 주는 시간 (초). 5초는 너무 빨리 바뀌어서 10초로
 DEFAULT_VIDEO_SEC = 10   # 동영상은 10초씩 잘라서 사용
 MIN_VIDEO_PIECE_SEC = 3  # 길이 자동 맞춤으로 줄일 때도 이보다 짧게는 자르지 않음
 DEFAULT_GAP_THRESHOLD_SEC = 120  # 이 간격(초)보다 크게 벌어지면 새 주제로 판단
@@ -415,7 +415,7 @@ def main():
     if len(sys.argv) < 2:
         print(
             "사용법: python capcut_assemble_classical.py <입력폴더> "
-            "[출력 CapCut Drafts 폴더] [초당 이미지길이=5] [그룹경계 간격(초)=120]"
+            "[출력 CapCut Drafts 폴더] [초당 이미지길이=10] [그룹경계 간격(초)=120]"
         )
         sys.exit(1)
 

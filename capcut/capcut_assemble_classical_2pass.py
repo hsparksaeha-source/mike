@@ -16,7 +16,7 @@
 만들 것 고르기 (세 번째 값): 1 = 둘 다(기본), 2 = 전곡만, 3 = 곡별만
 
 사용법:
-  python capcut_assemble_classical_2pass.py <입력폴더> [출력폴더] [만들것=1] [초당 이미지길이=5] [그룹경계 간격(초)=120]
+  python capcut_assemble_classical_2pass.py <입력폴더> [출력폴더] [만들것=1] [초당 이미지길이=10] [그룹경계 간격(초)=120]
 """
 
 import os
@@ -86,7 +86,7 @@ def main():
     if len(sys.argv) < 2:
         print(
             "사용법: python capcut_assemble_classical_2pass.py <입력폴더> "
-            "[출력 CapCut Drafts 폴더] [만들것 1=둘다/2=전곡만/3=곡별만] [초당 이미지길이=5] [그룹경계 간격(초)=120]"
+            "[출력 CapCut Drafts 폴더] [만들것 1=둘다/2=전곡만/3=곡별만] [초당 이미지길이=10] [그룹경계 간격(초)=120]"
         )
         sys.exit(1)
 

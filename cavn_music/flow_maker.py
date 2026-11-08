@@ -1345,11 +1345,12 @@ NO_VIDEO_NAME = ".영상없음"   # Flow 가 이 트랙 영상을 거절해서 �
 DONE_NAME = ".flow완료"   # Flow 가 일부를 '실패'로 못 만들어서 15장보다 적어도, 만든 것은 다 받았다는 표시
 
 
-def track_done(image_folder, scene_dir, number, n_images):
-    """이미지 n_images장 이상(또는 만든 것 전부를 받았다는 표시)과 영상이 다 있으면 끝난 트랙."""
+def track_done(image_folder, scene_dir, number, n_images, need_video=True):
+    """이미지 n_images장 이상(또는 만든 것 전부를 받았다는 표시)과 영상이 다 있으면 끝난 트랙.
+    need_video=False (영상 안 만들기) 이면 이미지만 보면 된다."""
     if not image_folder.is_dir():
         return False
-    if not video_path(scene_dir, number) and not (image_folder / NO_VIDEO_NAME).exists():
+    if need_video and not video_path(scene_dir, number) and not (image_folder / NO_VIDEO_NAME).exists():
         return False
     if (image_folder / DONE_NAME).exists():
         return True
@@ -1586,12 +1587,17 @@ def lyric_prompt(track):
     return f"{track.title}\n\n{track.lyrics}".strip()
 
 
-def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False, cast=None, project=None):
-    """cast(캐릭터 이름 목록)가 있으면 가요·칸쏘네 방식: 캐릭터 + 곡 제목 + 가사로 이미지, 가사에 맞게 영상."""
+def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False, cast=None, project=None,
+               want_video=True):
+    """cast(캐릭터 이름 목록)가 있으면 가요·칸쏘네 방식: 캐릭터 + 곡 제목 + 가사로 이미지, 가사에 맞게 영상.
+    want_video=False 이면 영상은 만들지 않고 이미지만."""
     folder.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
     local = [f for f in folder.iterdir() if f.suffix.lower() in IMAGE_EXTS]
+    if not reuse and not want_video and ((folder / DONE_NAME).exists() or len(local) >= n_images):
+        log("  이미지는 이미 받아 두었습니다 (영상은 만들지 않음)")
+        return
     if not reuse and ((folder / DONE_NAME).exists() or len(local) >= n_images):
         # 이미지는 다 받아 두었고 영상만 없음 → 받아 둔 그림과 같은 제목의 그림을 Flow 에서 찾아 영상만 만든다
         log(f"  이미지 {len(local)}장은 이미 받아 두었습니다 → 영상만 만듭니다")
@@ -1637,7 +1643,10 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
     save_state(folder, images=[img["key"] for img in images], titles=[img.get("text", "") for img in images])
 
     have_video = video_path(scene_dir, track.number) is not None
-    if (folder / NO_VIDEO_NAME).exists():
+    if not want_video:
+        log("  영상은 만들지 않습니다 (이미지만)")
+        video = None
+    elif (folder / NO_VIDEO_NAME).exists():
         log("  이 트랙 영상은 지난번에 Flow 가 거절해서 건너뜁니다")
         video = None
     elif have_video:
@@ -1792,22 +1801,36 @@ def connect(pw):
     return page
 
 
+def ask_videos():
+    while True:
+        ans = input("영상도 만들까요? 이미지만 쓰려면 n (Y/n, Enter = 영상도 만듦): ").strip().lower()
+        if ans in ("", "y", "yes", "ㅛ", "예", "네"):
+            return True
+        if ans in ("n", "no", "ㅜ", "아니요", "아니오"):
+            return False
+
+
 def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_images=IMAGES_PER_TRACK,
-        cast_group=None, cast=None):
+        cast_group=None, cast=None, videos=None):
     """cast_group: 가요·칸쏘네 md 에 쓸 캐릭터목록 묶음 이름 (안 주면 물어봄).
-    cast: {트랙 번호: [이름…]} (안 주면 confirm 일 때 곡마다 묻고, 아니면 기본값)"""
+    cast: {트랙 번호: [이름…]} (안 주면 confirm 일 때 곡마다 묻고, 아니면 기본값)
+    videos: 영상도 만들지 (False 면 이미지만). 안 주면 confirm 일 때 묻고, 아니면 만든다."""
     md_path = Path(md_path)
     tracks = [t for t in parse_md_file(md_path) if not only or t.number in only]
     album_dir = Path(out_root) / safe_filename(md_path.stem)
     out_dir, scene_dir = album_dir / "이미지", album_dir / "장면"
     last = max((t.number for t in tracks), default=0)
     print(f"\nmd 파일 : {md_path.name}\n이미지  : {out_dir}\\1번 ~ {last}번\n영상    : {scene_dir}\\1.mp4 ~ {last}.mp4\n")
+    if videos is None:
+        videos = ask_videos() if confirm and not dry_run else True
+    if not videos:
+        print("영상은 만들지 않고 이미지만 만듭니다.\n")
     todo = []
     for t in tracks:
         folder = image_folder(out_dir, t.number)
         if not t.image_prompt and not t.lyrics:
             mark = "!! 이미지 프롬프트·가사 없음(건너뜀)"
-        elif track_done(folder, scene_dir, t.number, n_images):
+        elif track_done(folder, scene_dir, t.number, n_images, need_video=videos):
             mark = "완료(건너뜀)"
         else:
             mark = ""
@@ -1816,7 +1839,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
     if not any(t.image_prompt or t.lyrics for t in tracks):
         print("이 md 파일에는 이미지 프롬프트도 가사도 없습니다.")
         return
-    print(f"\n만들 트랙 {len(todo)}개 (트랙마다 이미지 {n_images}장 + 영상 1개)")
+    print(f"\n만들 트랙 {len(todo)}개 (트랙마다 이미지 {n_images}장" + (" + 영상 1개)" if videos else ", 영상 없음)"))
     if dry_run or not todo:
         return
     # 가요·칸쏘네 (이미지 프롬프트 없이 가사만 있는 곡): 주인공 캐릭터를 정한다
@@ -1843,7 +1866,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
         print(f"\n{todo[0].number}번 트랙 이미지 {n_images}장을 지난번에 Flow 에서 이미 만들어 두었나요?")
         print("  (Flow 화면 맨 앞에 그 이미지들이 있으면 y → 새로 만들지 않고 그 이미지로 영상·컬렉션만 합니다)")
         reuse_first = input("기존 이미지 쓰기 (y/n): ").strip().lower() in ("y", "yes", "ㅛ")
-        if reuse_first:
+        if reuse_first and videos:
             print(f"{todo[0].number}번 트랙 영상도 이미 만들어 두었나요? (y → 새로 만들지 않고 컬렉션·다운로드만 합니다)")
             reuse_video_first = input("기존 영상 쓰기 (y/n): ").strip().lower() in ("y", "yes", "ㅛ")
 
@@ -1858,7 +1881,7 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
                     log(f"  주인공: {', '.join(names)}")
                 make_track(flow, t, image_folder(out_dir, t.number), scene_dir, n_images,
                            reuse=reuse_first and i == 1, reuse_video=reuse_video_first and i == 1,
-                           cast=names, project=project)
+                           cast=names, project=project, want_video=videos)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)
