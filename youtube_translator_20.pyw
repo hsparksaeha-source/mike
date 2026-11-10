@@ -117,7 +117,8 @@ def claude_prompt(title, desc, langs):
     lines = "\n".join(f"{name},{code}" for code, name in langs)
     return f"""아래 유튜브 영상 제목과 설명을 다음 {len(langs)}개 언어로 번역해 주세요.
 
-답은 CSV 하나만 코드 블록(```csv)으로 주세요. 다른 말은 쓰지 마세요.
+아래 {len(langs)}개 언어를 하나도 빠짐없이 모두 번역해서, CSV 하나만 코드 블록(```csv) 하나에 담아 주세요.
+중간에 멈추거나 "계속할까요?" 라고 묻지 말고 끝까지 한 번에 써 주세요. 다른 말은 쓰지 마세요.
 - 첫 줄은 정확히: 언어,언어코드,영상 제목,영상 설명
 - 언어마다 한 줄. 언어와 언어코드는 아래 목록 그대로.
 - 제목과 설명은 큰따옴표로 감싸고, 설명 안의 줄바꿈은 그대로 둡니다. 글 안의 큰따옴표는 두 개("")로 씁니다.
@@ -135,17 +136,38 @@ def claude_prompt(title, desc, langs):
 """
 
 
-def parse_claude_csv(text):
-    """Claude 답(코드 블록 안 CSV) → {코드: (이름, 제목, 설명)}"""
-    m = re.search(r"```(?:csv)?\s*\n(.*?)```", text, re.S)
-    body = m.group(1) if m else text
-    rows = list(csv.reader(io.StringIO(body.strip())))
+def parse_claude_csv(text, known=None):
+    """Claude 답 → {코드: (이름, 제목, 설명)}.
+    Claude 가 표를 코드 블록 여러 개로 나누거나, 설명을 큰따옴표로 감싸지 않거나(쉼표·줄바꿈이 섞임)
+    해도 읽도록, '언어,언어코드,' 로 시작하는 줄마다 한 언어로 나눠서 읽는다."""
+    known = set(known or ALL_SUPPORTED_LANGS)
+    blocks = re.findall(r"```(?:csv)?[^\n]*\n(.*?)```", text, re.S)
+    body = "\n".join(blocks) if blocks else text
+    start = re.compile(r"^\s*([^,\n\"]{1,30}),\s*([A-Za-z]{2,3}(?:-[A-Za-z]{2})?)\s*,")
+    records, cur = [], None
+    for line in body.splitlines():
+        m = start.match(line)
+        if m and m.group(2) in known:
+            cur = [line]
+            records.append(cur)
+        elif cur is not None:
+            cur.append(line)
     out = {}
-    for row in rows:
-        if len(row) < 4 or row[1].strip() in ("언어코드", ""):
+    for rec in records:
+        joined = "\n".join(rec).strip()
+        try:
+            parsed = list(csv.reader(io.StringIO(joined)))
+        except csv.Error:
+            parsed = []
+        # 한 줄(따옴표 안 줄바꿈 포함)로 읽혀야 정상. 아니면 따옴표 없이 줄바꿈이 섞인 것 → 앞의 쉼표 세 개로만 나눈다
+        row = parsed[0] if len(parsed) == 1 else []
+        if len(row) < 4:
+            row = [c.strip().strip('"') for c in joined.split(",", 3)]
+        if len(row) < 4:
             continue
-        name, code, title, desc = (c.strip() for c in row[:4])
-        out[code] = (name, title, desc)
+        name, code, title = (c.strip() for c in row[:3])
+        desc = ",".join(row[3:]).strip()   # 설명 안의 쉼표 때문에 칸이 더 생겼으면 다시 붙인다
+        out[code] = (name, title.strip('"'), desc.strip('"'))
     return out
 
 
@@ -387,6 +409,7 @@ class App:
 
     def reset_claude(self):
         self.claude_part = 0
+        self.claude_missing = []
         self.btn_claude.config(text="🤖 Claude 요청문 복사")
 
     def copy_claude(self):
@@ -394,10 +417,18 @@ class App:
         if not title and not desc:
             messagebox.showwarning("경고", "번역할 제목이나 설명을 먼저 넣어 주세요.")
             return
+        missing = getattr(self, "claude_missing", [])
+        if missing:   # 지난번 답에서 빠진 언어부터 다시 부탁한다
+            self.copy(claude_prompt(title, desc, missing))
+            self.claude_asked = missing
+            self.status.config(text=f"📋 빠진 {len(missing)}개 언어만 다시 부탁하는 요청문을 복사했습니다. "
+                                    "Claude 에 붙여 넣고 답을 [Claude 답 붙여넣기]", foreground="blue")
+            return
         langs = self.claude_langs()
         parts = [langs[i:i + CLAUDE_BATCH] for i in range(0, len(langs), CLAUDE_BATCH)]
         k = self.claude_part % len(parts)
         self.copy(claude_prompt(title, desc, parts[k]))
+        self.claude_asked = parts[k]
         self.claude_part = k + 1
         more = len(parts) > 1
         self.btn_claude.config(text=f"🤖 Claude 요청문 복사 ({self.claude_part % len(parts) + 1}/{len(parts)})" if more
@@ -414,15 +445,22 @@ class App:
             text = ""
         rows = parse_claude_csv(text)
         if not rows:
-            messagebox.showwarning("알림", "복사한 글에서 번역 표(CSV)를 찾지 못했습니다.\n"
-                                           "Claude 답의 코드 블록 오른쪽 위 [복사] 를 누른 뒤 다시 해 주세요.")
+            messagebox.showwarning("알림", "복사한 글에서 번역 표를 찾지 못했습니다.\n"
+                                           "Claude 답 전체를 드래그해서 복사하거나, 표 오른쪽 위 [복사] 를 누른 뒤 다시 해 주세요.")
             return
         for code, (name, title, desc) in rows.items():
             if code not in self.active_langs:
                 self.add_card(code, ALL_SUPPORTED_LANGS.get(code, name))
             self.set_card(code, title, desc)
-        self.status.config(text=f"✅ Claude 번역 {len(rows)}개 언어를 넣었습니다. 다 넣었으면 CSV 로 저장하세요.",
-                           foreground="green")
+        asked = getattr(self, "claude_asked", [])
+        self.claude_missing = [(c, n) for c, n in asked if c not in rows]
+        if self.claude_missing:
+            names = ", ".join(n for _, n in self.claude_missing)
+            self.status.config(text=f"⚠️ {len(rows)}개 언어를 넣었고, {len(self.claude_missing)}개가 빠졌습니다 ({names}). "
+                                    "[Claude 요청문 복사] 를 누르면 빠진 언어만 다시 부탁합니다.", foreground="red")
+        else:
+            self.status.config(text=f"✅ Claude 번역 {len(rows)}개 언어를 넣었습니다. 다음 묶음이 있으면 계속, "
+                                    "다 넣었으면 CSV 로 저장하세요.", foreground="green")
 
     # -- 저장·복사
     def save_csv(self):

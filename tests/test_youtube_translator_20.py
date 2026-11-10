@@ -47,3 +47,22 @@ def test_claude_prompt_and_answer_roundtrip(tmp_path):
     out = tmp_path / "out.csv"
     yt.write_csv(out, [(n, c, t, d) for c, (n, t, d) in rows.items()])
     assert out.read_text(encoding="utf-8-sig").splitlines()[0] == "언어,언어코드,영상 제목,영상 설명"
+
+
+def test_claude_answer_in_several_blocks_and_without_quotes():
+    answer = '''```csv
+언어,언어코드,영상 제목,영상 설명
+영어,en,Winter Night,Calm piano, soft cello
+#수면음악
+```
+다음은 나머지입니다.
+```csv
+일본어,ja,"冬の夜","静かな
+ピアノ"
+스페인어,es,Noche de invierno,"Piano tranquilo, chelo"
+```'''
+    rows = yt.parse_claude_csv(answer)
+    assert set(rows) == {"en", "ja", "es"}
+    assert rows["en"] == ("영어", "Winter Night", "Calm piano, soft cello\n#수면음악")
+    assert rows["ja"][2] == "静かな\nピアノ"
+    assert rows["es"][2] == "Piano tranquilo, chelo"
