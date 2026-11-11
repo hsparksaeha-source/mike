@@ -34,3 +34,16 @@ def test_original_on_top_on_screen_and_swapped_when_saved_for_video():
                      "[00:15.00]Ciao", "[00:15.00]안녕"]
     assert lrc.for_video("\n".join(shown)).split("\n") == [
         "[ti:x]", "[00:12.34]너는 나의 노래", "[00:12.34]Tu sei la mia canzone", "[00:15.00]안녕", "[00:15.00]Ciao"]
+
+
+def test_claude_prompt_and_answer_for_lyrics():
+    parsed, todo = lrc.parse_lrc("[ti:x]\n[00:12.34]Tu sei la mia canzone\n[00:15.00]Ciao amore")
+    prompt = lrc.claude_lrc_prompt(todo, "한국어")
+    assert "1. Tu sei la mia canzone" in prompt and "2. Ciao amore" in prompt and "한국어" in prompt
+    answer = "```\n1. 너는 나의 노래\n2) 안녕 내 사랑\n```"
+    assert lrc.apply_claude_answer(todo, answer) == (2, [])
+    assert lrc.build_lines(parsed, "x2ko") == [
+        "[ti:x]", "[00:12.34]Tu sei la mia canzone", "[00:12.34]너는 나의 노래",
+        "[00:15.00]Ciao amore", "[00:15.00]안녕 내 사랑"]
+    _, todo2 = lrc.parse_lrc("[00:01.00]a b\n[00:02.00]c d")
+    assert lrc.apply_claude_answer(todo2, "1. 하나") == (1, [2])

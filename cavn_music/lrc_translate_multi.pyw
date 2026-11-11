@@ -104,6 +104,38 @@ def parse_lrc(text):
     return parsed, todo
 
 
+def claude_lrc_prompt(todo, target_name):
+    """Claude 대화창에 붙여 넣을 요청문 (요금 없이 번역). 줄마다 번호를 붙여 순서가 어긋나지 않게 한다."""
+    lines = "\n".join(f"{i}. {item['original_text']}" for i, item in enumerate(todo, 1))
+    return f"""아래 노래 가사 {len(todo)}줄을 {target_name}로 번역해 주세요. 노래 자막으로 쓸 것이라 자연스럽고 짧게 해 주세요.
+
+답은 코드 블록(```) 하나에, 줄마다 같은 번호를 붙여서 주세요. 예) 1. 번역문
+- {len(todo)}줄을 하나도 빠짐없이, 순서 그대로, 한 줄에 한 번호씩.
+- 중간에 멈추거나 "계속할까요?" 라고 묻지 말고 끝까지 한 번에 써 주세요. 다른 말은 쓰지 마세요.
+
+{lines}
+"""
+
+
+def apply_claude_answer(todo, answer):
+    """Claude 답의 '번호. 번역문' 줄을 가사 줄에 넣는다. (넣은 줄 수, 빠진 번호 목록)"""
+    blocks = re.findall(r"```[^\n]*\n(.*?)```", answer, re.S)
+    body = "\n".join(blocks) if blocks else answer
+    found = {}
+    for line in body.splitlines():
+        m = re.match(r"^\s*(\d+)\s*[.)|:\-]\s*(.*\S)\s*$", line)
+        if m:
+            found[int(m.group(1))] = m.group(2)
+    filled, missing = 0, []
+    for i, item in enumerate(todo, 1):
+        if i in found:
+            item["translated_text"] = found[i]
+            filled += 1
+        else:
+            missing.append(i)
+    return filled, missing
+
+
 class SubtitleTranslatorApp:
     def __init__(self, root):
         self.root = root
@@ -160,6 +192,15 @@ class SubtitleTranslatorApp:
         
         self.btn_save = tk.Button(btn_frame, text="💾 LRC / SRT로 저장하기", command=self.save_file, width=20, height=2)
         self.btn_save.pack(side=tk.RIGHT, padx=5)
+
+        # 요금 없이: Claude 대화창으로 번역 (요청문 복사 → Claude 에 붙여넣기 → 답 복사 → 답 붙여넣기)
+        free_frame = tk.Frame(self.root)
+        free_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        tk.Label(free_frame, text="💡 요금 없이:", font=("맑은 고딕", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(free_frame, text="🤖 Claude 요청문 복사", command=self.copy_claude, height=1).pack(side=tk.LEFT, padx=5)
+        tk.Button(free_frame, text="📥 Claude 답 붙여넣기", command=self.paste_claude, height=1).pack(side=tk.LEFT, padx=5)
+        tk.Label(free_frame, text="(요청문을 claude.ai 새 대화에 붙여 넣고, 답을 복사해서 [답 붙여넣기])",
+                 fg="gray", font=("맑은 고딕", 9)).pack(side=tk.LEFT, padx=5)
 
         self.status_label = tk.Label(self.root, text="대기 중...", fg="gray", font=("맑은 고딕", 9, "bold"))
         self.status_label.pack(side=tk.BOTTOM, pady=5)
@@ -298,6 +339,41 @@ class SubtitleTranslatorApp:
         self.root.after(0, lambda: self.txt_result.insert(tk.END, '\n'.join(output_lines)))
         self.root.after(0, lambda: self.status_label.config(text="모든 가사가 누락 없이 100% 번역되었습니다! 🎉", fg="green"))
         self.root.after(0, lambda: self.btn_translate.config(state=tk.NORMAL, text="🎯 100% 정밀 번역 시작 (약 1분 소요)"))
+
+    def copy_claude(self):
+        original = self.txt_original.get("1.0", tk.END).strip()
+        if not original:
+            messagebox.showwarning("경고", "먼저 원본 파일을 불러오거나 가사를 넣어 주세요.")
+            return
+        _, todo = parse_lrc(original)
+        if not todo:
+            messagebox.showwarning("경고", "번역할 가사 줄([00:12.34]가사)을 찾지 못했습니다.")
+            return
+        target = "한국어" if self.trans_direction.get() == "x2ko" else "영어"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(claude_lrc_prompt(todo, target))
+        self.status_label.config(text=f"📋 요청문({len(todo)}줄 → {target}) 복사. claude.ai 새 대화에 붙여 넣고, "
+                                      "답을 복사해서 [Claude 답 붙여넣기]", fg="blue")
+
+    def paste_claude(self):
+        original = self.txt_original.get("1.0", tk.END).strip()
+        try:
+            answer = self.root.clipboard_get()
+        except tk.TclError:
+            answer = ""
+        parsed, todo = parse_lrc(original)
+        filled, missing = apply_claude_answer(todo, answer)
+        if not filled:
+            messagebox.showwarning("알림", "복사한 글에서 '1. 번역문' 모양의 줄을 찾지 못했습니다.\n"
+                                           "Claude 답의 코드 블록 오른쪽 위 [복사] 를 누른 뒤 다시 해 주세요.")
+            return
+        self.txt_result.delete("1.0", tk.END)
+        self.txt_result.insert(tk.END, "\n".join(build_lines(parsed, self.trans_direction.get())))
+        if missing:
+            self.status_label.config(text=f"⚠️ {filled}줄을 넣었고 {len(missing)}줄이 빠졌습니다 (번호 {missing[:10]}…). "
+                                          "빠진 줄은 원문만 들어갑니다.", fg="red")
+        else:
+            self.status_label.config(text=f"✅ Claude 번역 {filled}줄을 모두 넣었습니다 (요금 없음). 저장하세요.", fg="green")
 
     def save_file(self):
         result_text = self.txt_result.get("1.0", tk.END).strip()
