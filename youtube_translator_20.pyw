@@ -136,18 +136,35 @@ def claude_prompt(title, desc, langs):
 """
 
 
-def parse_claude_csv(text, known=None):
+CODE_ALIASES = {"iw": "he", "jv": "jw", "fil": "tl", "nb": "no", "zh": "zh-CN", "zh-hans": "zh-CN",
+                "zh-cn": "zh-CN", "zh-hant": "zh-TW", "zh-tw": "zh-TW", "pt-br": "pt", "pt-pt": "pt"}
+
+
+def normalize_code(code, name="", asked=()):
+    """Claude 가 언어코드를 조금 다르게 쓴 경우(zh-Hans, fil, jv …)에도 목록의 코드로 맞춘다."""
+    c = code.strip()
+    if c in ALL_SUPPORTED_LANGS:
+        return c
+    low = c.lower()
+    if low in CODE_ALIASES:
+        return CODE_ALIASES[low]
+    for ac, an in asked:   # 언어 이름(한국어)으로 찾기
+        if name.strip() == an:
+            return ac
+    return None
+
+
+def parse_claude_csv(text, known=None, asked=()):
     """Claude 답 → {코드: (이름, 제목, 설명)}.
     Claude 가 표를 코드 블록 여러 개로 나누거나, 설명을 큰따옴표로 감싸지 않거나(쉼표·줄바꿈이 섞임)
     해도 읽도록, '언어,언어코드,' 로 시작하는 줄마다 한 언어로 나눠서 읽는다."""
-    known = set(known or ALL_SUPPORTED_LANGS)
     blocks = re.findall(r"```(?:csv)?[^\n]*\n(.*?)```", text, re.S)
     body = "\n".join(blocks) if blocks else text
-    start = re.compile(r"^\s*([^,\n\"]{1,30}),\s*([A-Za-z]{2,3}(?:-[A-Za-z]{2})?)\s*,")
+    start = re.compile(r"^\s*\"?([^,\n\"]{1,30})\"?,\s*\"?([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?)\"?\s*,")
     records, cur = [], None
     for line in body.splitlines():
         m = start.match(line)
-        if m and m.group(2) in known:
+        if m and normalize_code(m.group(2), m.group(1), asked):
             cur = [line]
             records.append(cur)
         elif cur is not None:
@@ -166,6 +183,9 @@ def parse_claude_csv(text, known=None):
         if len(row) < 4:
             continue
         name, code, title = (c.strip() for c in row[:3])
+        code = normalize_code(code, name, asked)
+        if not code:
+            continue
         desc = ",".join(row[3:]).strip()   # 설명 안의 쉼표 때문에 칸이 더 생겼으면 다시 붙인다
         out[code] = (name, title.strip('"'), desc.strip('"'))
     return out
@@ -203,7 +223,7 @@ class App:
         self.key = load_api_key()
         self.cache = load_cache()
         self.active_langs, self.lang_widgets = {}, {}
-        self.claude_part = 0
+        self.claude_parts, self.claude_next, self.claude_missing, self.claude_asked = None, 0, [], []
         self.create_top()
         self.create_lang_control()
         self.create_list()
@@ -408,42 +428,56 @@ class App:
         return list(self.active_langs.items())
 
     def reset_claude(self):
-        self.claude_part = 0
+        """[80개국으로] 를 바꾸면 처음 묶음부터 다시."""
+        self.claude_parts = None   # [[(코드, 이름) …], …] 처음 복사할 때 정해서 끝까지 그대로 쓴다
+        self.claude_next = 0       # 다음에 복사할 묶음 번호 (0부터)
         self.claude_missing = []
+        self.claude_asked = []
         self.btn_claude.config(text="🤖 Claude 요청문 복사")
+
+    def _claude_label(self):
+        total = len(self.claude_parts or [1])
+        if self.claude_missing:
+            return f"🤖 빠진 {len(self.claude_missing)}개 다시 부탁"
+        if self.claude_next >= total:
+            return f"🤖 Claude 요청문 복사 (끝 {total}/{total})"
+        return f"🤖 Claude 요청문 복사 ({self.claude_next + 1}/{total})"
 
     def copy_claude(self):
         title, desc = self.source()
         if not title and not desc:
             messagebox.showwarning("경고", "번역할 제목이나 설명을 먼저 넣어 주세요.")
             return
-        missing = getattr(self, "claude_missing", [])
-        if missing:   # 지난번 답에서 빠진 언어부터 다시 부탁한다
-            self.copy(claude_prompt(title, desc, missing))
-            self.claude_asked = missing
-            self.status.config(text=f"📋 빠진 {len(missing)}개 언어만 다시 부탁하는 요청문을 복사했습니다. "
+        if not getattr(self, "claude_parts", None):
+            langs = self.claude_langs()
+            self.claude_parts = [langs[i:i + CLAUDE_BATCH] for i in range(0, len(langs), CLAUDE_BATCH)]
+            self.claude_next, self.claude_missing = 0, []
+        total = len(self.claude_parts)
+        if self.claude_missing:   # 지난번 답에서 빠진 언어만 한 번 다시 부탁한다
+            self.claude_asked, self.claude_missing = self.claude_missing, []
+            self.copy(claude_prompt(title, desc, self.claude_asked))
+            self.status.config(text=f"📋 빠진 {len(self.claude_asked)}개 언어 요청문 복사 → Claude 에 붙여 넣고 "
+                                    "답을 [Claude 답 붙여넣기]", foreground="blue")
+        else:
+            if self.claude_next >= total:
+                if not messagebox.askyesno("알림", f"{total}개 묶음을 모두 부탁했습니다. 처음 묶음부터 다시 할까요?"):
+                    return
+                self.claude_next = 0
+            k = self.claude_next
+            self.claude_asked = self.claude_parts[k]
+            self.copy(claude_prompt(title, desc, self.claude_asked))
+            self.claude_next = k + 1
+            self.status.config(text=f"📋 묶음 {k + 1}/{total} ({len(self.claude_asked)}개 언어) 요청문 복사 → "
                                     "Claude 에 붙여 넣고 답을 [Claude 답 붙여넣기]", foreground="blue")
-            return
-        langs = self.claude_langs()
-        parts = [langs[i:i + CLAUDE_BATCH] for i in range(0, len(langs), CLAUDE_BATCH)]
-        k = self.claude_part % len(parts)
-        self.copy(claude_prompt(title, desc, parts[k]))
-        self.claude_asked = parts[k]
-        self.claude_part = k + 1
-        more = len(parts) > 1
-        self.btn_claude.config(text=f"🤖 Claude 요청문 복사 ({self.claude_part % len(parts) + 1}/{len(parts)})" if more
-                               else "🤖 Claude 요청문 복사")
-        self.status.config(text=(f"📋 요청문({k + 1}/{len(parts)}) 복사 → Claude 대화창에 붙여 넣고, 답을 복사해서 "
-                                 "[Claude 답 붙여넣기]" if more else
-                                 "📋 요청문 복사 → Claude 대화창에 붙여 넣고, 답을 복사해서 [Claude 답 붙여넣기]"),
-                           foreground="blue")
+        self.btn_claude.config(text=self._claude_label())
 
     def paste_claude(self):
         try:
             text = self.root.clipboard_get()
         except tk.TclError:
             text = ""
-        rows = parse_claude_csv(text)
+        asked = getattr(self, "claude_asked", [])
+        rows = parse_claude_csv(text, asked=asked)
         if not rows:
             messagebox.showwarning("알림", "복사한 글에서 번역 표를 찾지 못했습니다.\n"
                                            "Claude 답 전체를 드래그해서 복사하거나, 표 오른쪽 위 [복사] 를 누른 뒤 다시 해 주세요.")
@@ -452,15 +486,20 @@ class App:
             if code not in self.active_langs:
                 self.add_card(code, ALL_SUPPORTED_LANGS.get(code, name))
             self.set_card(code, title, desc)
-        asked = getattr(self, "claude_asked", [])
         self.claude_missing = [(c, n) for c, n in asked if c not in rows]
+        total = len(getattr(self, "claude_parts", None) or [1])
+        done = min(getattr(self, "claude_next", 1), total)
         if self.claude_missing:
             names = ", ".join(n for _, n in self.claude_missing)
-            self.status.config(text=f"⚠️ {len(rows)}개 언어를 넣었고, {len(self.claude_missing)}개가 빠졌습니다 ({names}). "
-                                    "[Claude 요청문 복사] 를 누르면 빠진 언어만 다시 부탁합니다.", foreground="red")
+            self.status.config(text=f"⚠️ 묶음 {done}/{total}: {len(rows)}개 넣음, {len(self.claude_missing)}개 빠짐 ({names}). "
+                                    "단추를 누르면 빠진 언어만 다시 부탁합니다.", foreground="red")
+        elif done < total:
+            self.status.config(text=f"✅ 묶음 {done}/{total}: {len(rows)}개 언어를 넣었습니다. "
+                                    f"다음은 묶음 {done + 1}/{total} — [Claude 요청문 복사]", foreground="green")
         else:
-            self.status.config(text=f"✅ Claude 번역 {len(rows)}개 언어를 넣었습니다. 다음 묶음이 있으면 계속, "
-                                    "다 넣었으면 CSV 로 저장하세요.", foreground="green")
+            self.status.config(text=f"✅ 마지막 묶음까지 넣었습니다 ({len(rows)}개). 이제 [💾 CSV 저장] 을 누르세요.",
+                               foreground="green")
+        self.btn_claude.config(text=self._claude_label())
 
     # -- 저장·복사
     def save_csv(self):

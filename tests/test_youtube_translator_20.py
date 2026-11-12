@@ -66,3 +66,15 @@ def test_claude_answer_in_several_blocks_and_without_quotes():
     assert rows["en"] == ("영어", "Winter Night", "Calm piano, soft cello\n#수면음악")
     assert rows["ja"][2] == "静かな\nピアノ"
     assert rows["es"][2] == "Piano tranquilo, chelo"
+
+
+def test_claude_codes_written_differently_are_matched():
+    asked = [("zh-CN", "중국어(간체)"), ("tl", "필리핀어"), ("jw", "자바어")]
+    answer = '''```csv
+언어,언어코드,영상 제목,영상 설명
+중국어(간체),zh-Hans,"冬夜","安静"
+필리핀어,fil,"Gabi","Tahimik"
+자바어,jv,"Wengi","Sepi"
+```'''
+    rows = yt.parse_claude_csv(answer, asked=asked)
+    assert set(rows) == {"zh-CN", "tl", "jw"}
