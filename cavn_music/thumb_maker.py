@@ -190,6 +190,7 @@ def parse_thumbnails(text):
                 thumb.prompt = re.sub(r"^\s*\[[^\]]*\]\s*", "", re.sub(r"\s*\n\s*", " ", first)).strip()
 
     result = [thumbs[n] for n in order if thumbs[n].options]
+    fill_prompts_from_tracks(result, text)
     for t in result:
         labels = {}
         for k, o in enumerate(t.options, 1):
@@ -201,6 +202,39 @@ def parse_thumbnails(text):
         for k, o in enumerate(t.en_options, 1):   # 영문 썸네일 이름: 영문 (여러 안이면 영문1, 영문2 …)
             o.label = "영문" if len(t.en_options) == 1 else f"영문{k}"
     return result
+
+
+def track_thumb_prompts(text):
+    """곡(트랙)마다 적힌 '썸네일 이미지 생성 문구 / 썸네일 이미지 프롬프트' → [(번호, 제목줄, 프롬프트)]"""
+    out = []
+    parts = re.split(r"(?m)^#{1,3}\s*(?:Track|트랙)\s*(\d+)\s*[.:]\s*(.*)$", text)
+    for i in range(1, len(parts) - 2, 3):
+        number, title, body = int(parts[i]), parts[i + 1].strip(), parts[i + 2]
+        m = re.search(r"(?m)^#{1,4}\s*\**\s*썸네일\s*이미지\s*(?:생성\s*문구|생성\s*프롬프트|프롬프트)[^\n]*\n+```[^\n]*\n(.*?)```",
+                      body, re.S)
+        if m:
+            out.append((number, title, re.sub(r"\s*\n\s*", " ", m.group(1)).strip()))
+    return out
+
+
+def fill_prompts_from_tracks(thumbs, text):
+    """메인·싱글에 썸네일 이미지 프롬프트가 없으면, 곡마다 적힌 썸네일 이미지 문구를 쓴다.
+    싱글은 같은 제목의 곡, 메인은 타이틀곡(없으면 1번 곡)."""
+    tracks = track_thumb_prompts(text)
+    if not tracks:
+        return
+    for t in thumbs:
+        if t.prompt:
+            continue
+        pick = None
+        if t.title:
+            key = _norm(re.sub(r"\(.*?\)", "", t.title))
+            pick = next((tr for tr in tracks if key and (key in _norm(tr[1]) or _norm(re.sub(r"\(.*?\)", "", tr[1])) in key)),
+                        None)
+        if pick is None and t.name == "메인":
+            pick = next((tr for tr in tracks if "타이틀" in tr[1]), tracks[0])
+        if pick:
+            t.prompt = pick[2]
 
 
 # ---------------------------------------------------------------- 글꼴 찾기

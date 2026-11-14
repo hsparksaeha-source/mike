@@ -209,3 +209,42 @@ def test_background_from_track_images_when_no_prompt(tmp_path):
     assert thumb_maker.reuse_track_images(main, tracks, album, tmp_path / "배경" / "메인")
     assert [p.name for p in (tmp_path / "배경" / "싱글2").iterdir()] == ["img2.jpg"]
     assert [p.name for p in (tmp_path / "배경" / "메인").iterdir()] == ["img1.jpg"]
+
+
+POP_THUMB = """# Track 1. 아무 약속도 없는 토요일
+
+## 썸네일 이미지 생성 문구 → 텍스트 박스
+```
+young woman waking up slowly
+in a sunlit bedroom
+```
+
+# Track 2. Lonely Weekend (타이틀곡)
+
+## 썸네일 이미지 생성 문구 → 텍스트 박스
+```
+young man by a window at dusk
+```
+
+# PART B. 플레이리스트
+
+## 썸네일 문구
+```
+한글버전1: 아무것도 안 해도 되는 주말 / 어쿠스틱 발라드 10곡
+```
+
+# PART C. 싱글
+
+## Single 1. 아무 약속도 없는 토요일
+
+### 썸네일 문구
+```
+한글1: 아무 약속도 없는 토요일 / 여유로운 아침
+```
+"""
+
+
+def test_thumbnail_prompts_from_each_track_section():
+    main, single = thumb_maker.parse_thumbnails(POP_THUMB)
+    assert main.prompt == "young man by a window at dusk"            # 메인은 타이틀곡
+    assert single.prompt == "young woman waking up slowly in a sunlit bedroom"   # 싱글은 같은 제목 곡
