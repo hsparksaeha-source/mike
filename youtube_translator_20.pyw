@@ -424,7 +424,9 @@ class App:
     # -- Claude 로 번역 (요금 없음)
     def claude_langs(self):
         if self.claude_all.get():
-            return [(c, ALL_SUPPORTED_LANGS[c]) for c in FREE_80]
+            # 1/4 묶음은 이용자가 많은 기본 20개국, 2/4~4/4 는 나머지 60개국
+            order = list(DEFAULT_LANGS) + [c for c in FREE_80 if c not in DEFAULT_LANGS]
+            return [(c, ALL_SUPPORTED_LANGS[c]) for c in order[:80]]
         return list(self.active_langs.items())
 
     def reset_claude(self):
