@@ -1785,7 +1785,10 @@ def connect(pw):
     browser = pw.chromium.connect_over_cdp(cdp)
     context = browser.contexts[0] if browser.contexts else browser.new_context()
     # CAVN·Flow 가 같은 크롬을 쓰므로 이 사이트 탭을 찾아 쓰고, 없으면 새 탭
-    page = next((p for p in context.pages if _is_flow(p.url)), None) or context.new_page()
+    # 이미 프로젝트가 열린 탭이 있으면 (다른 창이라도) 그 탭을 바로 쓴다 → 일괄 작업 중간에 다시 묻지 않음
+    pages = [p for c in browser.contexts for p in c.pages]
+    page = (next((p for p in pages if _is_flow(p.url) and "/project/" in p.url), None)
+            or next((p for p in context.pages if _is_flow(p.url)), None) or context.new_page())
     page.bring_to_front()
     if "/project/" not in page.url:
         page.goto(FLOW_URL, wait_until="domcontentloaded")
