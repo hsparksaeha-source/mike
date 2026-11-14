@@ -497,14 +497,18 @@ def reuse_track_images(thumb, tracks, album_dir, bg_dir):
         pick = next((t for t in tracks if _norm(t.title) == key or key in _norm(t.title) or _norm(t.title) in key), None)
     if pick is None and thumb.name == "메인" and tracks:
         pick = tracks[0]
-    if pick is not None:
-        src = backgrounds(album_dir / "이미지" / f"{pick.number}번")
+    # 그 곡 이미지가 없으면 그림이 있는 다른 곡 이미지라도 쓴다 (빈 썸네일보다 낫게)
+    order = ([pick] if pick is not None else []) + [t for t in tracks if t is not pick]
+    for t in order:
+        src = backgrounds(album_dir / "이미지" / f"{t.number}번")
         if src:
             bg_dir.mkdir(parents=True, exist_ok=True)
             for p in src[:BG_IMAGES]:
                 shutil.copy2(p, bg_dir / p.name)
-            log(f"  이미지 프롬프트가 없어서 {pick.number}번 곡 이미지를 배경으로 씁니다 (크레딧 안 씀)")
+            log(f"  이미지 프롬프트가 없어서 {t.number}번 곡 이미지를 배경으로 씁니다 (크레딧 안 씀)")
             return True
+    log(f"  !! [{thumb.name}] 이미지 프롬프트도 없고 '{album_dir / '이미지'}' 에 곡 이미지도 없습니다."
+        " 이미지·영상을 먼저 만들어 주세요")
     return False
 
 
