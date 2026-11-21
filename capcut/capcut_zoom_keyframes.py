@@ -3,8 +3,11 @@
 
 이미 만들어진 캡컷 초안(클래식·가요 조립 프로그램이 만든 것, 캡컷에서 손본 것 모두)을 열어서
 사진 클립마다 크기 키프레임 2개를 넣습니다.
-  - 클립 처음: 100% (클립에 원래 설정된 크기 그대로)
-  - 클립 끝:   110~120% 등 원하는 비율
+  - 클립 처음: 항상 100%
+  - 클립 끝:   110~120% 등 원하는 비율 (넣은 숫자 그대로)
+  캡컷에서 손으로 넣었던 크기 키프레임이 있어도 지우고 100% → 넣은 숫자로 새로 넣습니다.
+  (캡컷은 키프레임이 있는 클립의 기본 크기 칸에 마지막 키프레임 값을 적어 두기 때문에,
+   그 값을 시작점으로 쓰면 110% → 126% 처럼 엉뚱하게 커짐)
 그래서 사진이 천천히 다가오는 것처럼 움직여 보입니다.
 
 - 동영상 클립은 이미 움직이므로 건드리지 않습니다 (사진만).
@@ -80,14 +83,13 @@ def add_zoom_to_content(data, end_ratio):
             if duration <= 0:
                 continue
             clip = seg.setdefault("clip", {})
-            scale = clip.setdefault("scale", {"x": 1.0, "y": 1.0})
-            start = float(scale.get("x") or 1.0)
+            clip["scale"] = {"x": 1.0, "y": 1.0}  # 시작은 항상 100%
             # 예전에 넣은 크기 키프레임은 지우고 새로 넣는다
             others = [k for k in seg.get("common_keyframes") or []
                       if k.get("property_type") not in SCALE_PROPS]
             others.append({
                 "id": uuid.uuid4().hex,
-                "keyframe_list": [_keyframe(0, start), _keyframe(duration, start * end_ratio)],
+                "keyframe_list": [_keyframe(0, 1.0), _keyframe(duration, end_ratio)],
                 "material_id": "",
                 "property_type": "KFTypeScaleX",
             })
