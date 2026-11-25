@@ -74,6 +74,14 @@
 const params = new URLSearchParams(location.search);
 const lengths = (params.get("lengths") || "150,200").split(",").map(Number);
 const genDelay = Number(params.get("delay") || 1500);
+if (params.get("newui") === "1") {   // 2026년 11월 화면: '제목' 이름표 없이 칸 안의 안내 글만 있음
+  addEventListener("DOMContentLoaded", () => {
+    const t = document.getElementById("title");
+    if (t.previousElementSibling && /^제목/.test(t.previousElementSibling.textContent)) t.previousElementSibling.remove();
+    t.placeholder = "곡 제목을 입력하세요 (필수)";
+    document.getElementById("lyrics").placeholder = "직접 가사를 입력하세요";
+  });
+}
 const load = (k, d) => JSON.parse(localStorage.getItem(k) || JSON.stringify(d));
 const store = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 let albums = load("albums", {"기본 앨범": 0});

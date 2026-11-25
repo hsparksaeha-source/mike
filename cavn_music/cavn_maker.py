@@ -268,6 +268,15 @@ class Cavn:
                                           (!next || (next.compareDocumentPosition(f) & 2)));
                 if (f) { f.setAttribute('data-cavn-field', key); out.push(key); }
             });
+            // 이름표가 없고 칸 안에 안내 글만 있는 새 화면 ('곡 제목을 입력하세요 (필수)', '직접 가사를 입력하세요' …)
+            const hints = {title: /제목|title/i, lyrics: /가사|lyrics/i, style: /스타일|style/i};
+            for (const [key, rx] of Object.entries(hints)) {
+                if (out.includes(key)) continue;
+                const f = boxes.find(f => !f.hasAttribute('data-cavn-field') &&
+                    rx.test((f.placeholder || '') + ' ' + (f.getAttribute('aria-label') || '')) &&
+                    !/검색|search|제외|exclude/i.test(f.placeholder || ''));
+                if (f) { f.setAttribute('data-cavn-field', key); out.push(key); }
+            }
             return out;
         }""", [self.FIELD_LABELS, self._mid_x()])
         return {key: self.page.locator(f"[data-cavn-field={key}]").first for key in found}

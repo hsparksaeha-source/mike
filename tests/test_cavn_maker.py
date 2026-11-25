@@ -488,3 +488,10 @@ def test_lrc_retried_after_album(tmp_path):
     title = "You Were Already There"
     assert (songs / f"{title}.lrc").exists() and (songs / f"{title} (1).lrc").exists()
     assert len(state["created"]) == 1
+
+
+def test_new_screen_without_title_label(tmp_path):
+    """2026년 11월 CAVN 화면: '제목' 이름표가 없고 칸 안에 '곡 제목을 입력하세요 (필수)' 만 있어도 제목 칸을 찾는다."""
+    songs, state = run_mock(tmp_path, POP_MD, "카페소네트5_2장.md", "150,200", extra="&newui=1")
+    assert [c["title"] for c in state["created"]] == ["You Were Already There", "Un'Estate Soltanto"]
+    assert state["created"][0]["lyrics"].startswith("[Verse 1 - male lead]")
