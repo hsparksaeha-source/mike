@@ -242,7 +242,8 @@ class Cavn:
 
     # -- 입력
     # 왼쪽 입력칸은 순서가 아니라 바로 위 이름표로 찾는다 (제목 칸도 여러 줄 글상자라서 순서로 세면 밀림)
-    FIELD_LABELS = [("title", "^제목"), ("lyrics", "^가사"), ("style", "^음악 스타일"),
+    # (제목 이름표는 '제목' 한 단어만: 아래쪽 안내문 '제목을 입력해주세요'가 잡히면 안 됨)
+    FIELD_LABELS = [("title", "^제목(\\s|\\*|\\(|$)"), ("lyrics", "^가사"), ("style", "^음악 스타일"),
                     ("gender", "^가수 성별"), ("model", "^모델 선택")]
 
     def fields(self):
@@ -268,6 +269,14 @@ class Cavn:
                                           (!next || (next.compareDocumentPosition(f) & 2)));
                 if (f) { f.setAttribute('data-cavn-field', key); out.push(key); }
             });
+            // 이름표 없이 칸 안의 안내 글씨(placeholder)만 있는 칸 (2026-11 화면: '곡 제목을 입력하세요 (필수)')
+            const hints = {title: /제목/, lyrics: /가사/, style: /스타일/};
+            for (const [key, rx] of Object.entries(hints)) {
+                if (out.includes(key)) continue;
+                const f = boxes.find(f => !f.hasAttribute('data-cavn-field') && rx.test(f.getAttribute('placeholder') || '')
+                                          && !/제외/.test(f.getAttribute('placeholder') || ''));
+                if (f) { f.setAttribute('data-cavn-field', key); out.push(key); }
+            }
             return out;
         }""", [self.FIELD_LABELS, self._mid_x()])
         return {key: self.page.locator(f"[data-cavn-field={key}]").first for key in found}
