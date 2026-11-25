@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 CAVN</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #111; color: #eee; }
+  #left { position: fixed; left: 0; top: 0; width: 38%; bottom: 60px; overflow: auto; padding: 10px; box-sizing: border-box; }
+  #right { position: fixed; right: 0; top: 0; width: 60%; bottom: 60px; overflow: auto; padding: 10px; box-sizing: border-box; }
+  #player { position: fixed; left: 0; right: 0; bottom: 0; height: 60px; background: #000; }
+  .row { border-bottom: 1px solid #333; padding: 8px; height: 110px; box-sizing: border-box; }
+  .row img { width: 50px; height: 50px; background: #555; display: block; }
+  .row .jk { position: relative; display: inline-block; }
+  .row .play { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; }
+  textarea { width: 90%; height: 80px; display: block; }
+  #make { width: 90%; display: block; }
+  #rightAlbum { width: 300px; }
+  .menu, .dialog, .options { position: fixed; background: #222; border: 1px solid #888; padding: 8px; z-index: 10; }
+  .menu { right: 20px; top: 40px; }
+  .dialog { left: 30%; top: 30%; }
+  .menu div, .options div { padding: 4px; cursor: pointer; }
+  #albumsPage, #masterPage { padding: 20px; }
+  .card { display: inline-block; border: 1px solid #555; padding: 10px; margin: 4px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="albumsPage" hidden>
+  <h2>내 앨범</h2>
+  <input type="text" placeholder="앨범 검색">
+  <button id="newAlbum">+ 앨범 만들기</button>
+  <div id="albumCards"></div>
+</div>
+
+<div id="masterPage" hidden>
+  <button>처리 기록 보기</button>
+  <h3 id="mtitle"></h3>
+  <h2>AI 마스터링 스타일 선택</h2>
+  <div class="card">표준 균형</div><div class="card">따뜻하고 부드러운</div><div class="card">밝고 선명한</div>
+  <div class="card">파워풀하고 강렬한</div><div class="card">빈티지 클래식</div><div class="card">보컬 최적화</div>
+  <div><button id="mstart">AI 처리 시작 (5 크레딧)</button></div>
+  <div id="mresult"></div>
+</div>
+
+<div id="createPage" hidden>
+  <div id="left">
+    <div><button>영감 모드</button><button id="customTab">커스텀 모드</button></div>
+    <button>오디오 업로드</button><button>음색 선택</button>
+    <div>제목 <span>(필수)</span></div>
+    <textarea id="title" rows="2"></textarea>
+    <div>가사 <span>(필수)</span> <button>+ 구조</button>
+      <span><button role="switch" id="instr" aria-checked="false"></button><span>연주곡</span></span></div>
+    <textarea id="lyrics"></textarea>
+    <button id="lyricsGen">가사 생성</button>
+    <div>음악 스타일 <span>?</span></div>
+    <textarea id="style" maxlength="1000" placeholder="예: 팝록, 따뜻한 보컬"></textarea>
+    <div>가수 성별 <span>?</span></div>
+    <div><button class="g">랜덤</button><button class="g">♂ 남성</button><button class="g">♀ 여성</button></div>
+    <div>모델 선택</div>
+    <div id="advToggle">고급 설정</div>
+    <div id="adv" hidden><label>제외할 스타일<input type="text" id="exclude"></label></div>
+    <button id="leftAlbum" aria-haspopup="listbox"></button>
+    <button id="make">지금 만들기</button>
+  </div>
+  <div id="right">
+    <button id="rightAlbum" aria-haspopup="listbox"></button>
+    <input type="text" id="search" placeholder="곡 검색...">
+    <div id="list"></div>
+  </div>
+  <div id="player"><span id="ptitle"></span> <span id="ptime">00:00 / 00:00</span></div>
+</div>
+
+<script>
+// 페이지를 옮겨 다녀도 남도록 localStorage 에 저장 (실제 사이트처럼)
+const params = new URLSearchParams(location.search);
+const lengths = (params.get("lengths") || "150,200").split(",").map(Number);
+const genDelay = Number(params.get("delay") || 1500);
+const load = (k, d) => JSON.parse(localStorage.getItem(k) || JSON.stringify(d));
+const store = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+let albums = load("albums", {"기본 앨범": 0});
+let songs = load("songs", []);       // {title, album, length, readyAt, id}
+let current = {left: "기본 앨범", right: "기본 앨범"};
+const ready = s => Date.now() >= s.readyAt;
+const fmt = s => String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+function record(key, value) { const list = load(key, []); list.push(value); store(key, list); }
+
+function closeAll() { document.querySelectorAll(".menu,.dialog,.options").forEach(e => e.remove()); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeAll(); });
+
+// 실제 CAVN 처럼: 파일을 준비한 뒤 [파일 다운로드] 버튼이 있는 창을 띄움
+function prepared(title, name, text) {
+  // Esc 로는 안 닫히고 오른쪽 위 X(글자 없는 아이콘 버튼)로만 닫힘, 화면 전체를 덮음
+  const d = document.createElement("div");
+  d.className = "prep";
+  d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50";
+  d.innerHTML = `<div style="position:absolute;left:30%;top:30%;background:#222;padding:20px">
+    <span>${title}</span> <button class="x"><svg width="10" height="10"></svg></button>
+    <div class="body">준비 중...</div></div>`;
+  d.querySelector(".x").onclick = () => d.remove();
+  document.body.appendChild(d);
+  setTimeout(() => {
+    d.querySelector(".body").innerHTML = `<div>✓ ${name}</div><button>파일 다운로드</button>`;
+    d.querySelector(".body button").onclick = () => download(name, text);
+  }, 800);
+}
+
+function download(name, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text]));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+const page = params.get("page");
+if (page === "albums") {
+  document.getElementById("albumsPage").hidden = false;
+  const draw = () => {
+    document.getElementById("albumCards").innerHTML =
+      Object.keys(albums).map(n => `<div class="card"><h3>${n}</h3><span>${albums[n]}곡</span></div>`).join("");
+  };
+  draw();
+  document.getElementById("newAlbum").onclick = () => {
+    const d = document.createElement("div");
+    d.className = "dialog";   // 실제 화면처럼 role 없음, 이름 칸 + 설명 칸
+    d.innerHTML = `<div>앨범 만들기</div><label>앨범 이름 *</label>
+      <input type="text" placeholder="앨범 이름을 입력해주세요">
+      <label>앨범 설명</label><textarea placeholder="앨범 설명을 입력해주세요 (선택사항)"></textarea>
+      <button>취소</button><button>만들기</button>`;
+    document.body.appendChild(d);
+    d.querySelectorAll("button")[1].onclick = () => {
+      const n = d.querySelector("input").value;
+      if (!n) return;   // 이름이 비면 안 만들어짐
+      albums[n] = 0; store("albums", albums); closeAll(); draw();
+    };
+  };
+} else if (page === "mastering") {
+  document.getElementById("masterPage").hidden = false;
+  const s = songs.find(x => x.id === Number(params.get("id")));
+  document.getElementById("mtitle").textContent = s.title;
+  let style = null;
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => style = c.textContent);
+  document.getElementById("mstart").onclick = () => {
+    document.getElementById("mresult").textContent = "처리 중 30%";
+    setTimeout(() => {
+      const r = document.getElementById("mresult");
+      r.innerHTML = "<span>완료</span> <button>다운로드</button>";
+      r.querySelector("button").onclick = () => {
+        record("mastered", {id: s.id, style});
+        prepared("WAV 오디오 다운로드", `${s.title}_mastered.wav`, `mastered ${style} ${s.title}#${s.id}`);
+      };
+    }, 1000);
+  };
+} else {
+  document.getElementById("createPage").hidden = false;
+  const instr = document.getElementById("instr");
+  instr.onclick = () => {
+    const on = instr.getAttribute("aria-checked") !== "true";
+    instr.setAttribute("aria-checked", on);
+    document.getElementById("lyrics").style.display = on ? "none" : "block";
+    document.getElementById("lyricsGen").style.display = on ? "none" : "inline";
+  };
+  let gender = "랜덤";
+  document.querySelectorAll(".g").forEach(b => b.onclick = () => gender = b.textContent.replace(/[♂♀]\s*/, ""));
+  document.getElementById("advToggle").onclick = () => {
+    const adv = document.getElementById("adv"); adv.hidden = !adv.hidden;
+  };
+
+  function albumButton(side) {
+    const b = document.getElementById(side + "Album");
+    b.textContent = `${current[side]} (${albums[current[side]]})`;
+    b.onclick = () => {
+      closeAll();
+      const o = document.createElement("div");
+      o.className = "options"; o.setAttribute("role", "listbox");
+      const r = b.getBoundingClientRect();
+      o.style.left = r.left + "px"; o.style.top = (r.bottom) + "px";
+      o.innerHTML = Object.keys(albums).map(n => `<div role="option">${n} (${albums[n]})</div>`).join("");
+      o.querySelectorAll("div").forEach((div, i) => div.onclick = () => {
+        current[side] = Object.keys(albums)[i]; closeAll();
+        if (side === "right") { document.getElementById("list").innerHTML = ""; albumButton("right");
+                                setTimeout(redraw, 1500); }   // 목록이 늦게 불러와짐
+        else redraw();
+      });
+      document.body.appendChild(o);
+    };
+  }
+
+  function redraw() {
+    albumButton("left"); albumButton("right");
+    const list = document.getElementById("list");
+    list.innerHTML = "";
+    // 실제 CAVN 처럼 곡이 많으면 목록에 일부만 보임 (limit). 검색하면 그 제목만 나옴
+    const q = document.getElementById("search").value.trim().toLowerCase();
+    const limit = Number(params.get("limit") || 0);
+    let shownSongs = songs.filter(s => s.album === current.right && (!q || s.title.toLowerCase().includes(q)));
+    if (limit && !q) shownSongs = shownSongs.slice(0, limit);
+    shownSongs.forEach(s => {
+      const row = document.createElement("div");
+      row.className = "row";
+      // 실제 화면처럼 제목 옆에 안 보이는 '더 보기'가 하나 더 숨어 있음
+      row.innerHTML = `<span class="jk"><img alt=""><span class="play">▶</span></span><span class="head"><span class="t">${s.title}</span>
+        <button style="display:none">더 보기</button></span> <span>CAVNV5.5</span>
+        <div>${ready(s) ? "<button>MV 만들기</button><button class='master'>AI 마스터링</button>" : "생성 중 42%"}</div>
+        <button class="more">더 보기</button>`;
+      row.querySelector(".play").onclick = () => {
+        document.getElementById("ptitle").textContent = s.title;
+        document.getElementById("ptime").textContent = "00:00 / " + fmt(s.length);
+      };
+      row.querySelector(".more").onclick = () => ready(s) && openMenu(s);
+      const m = row.querySelector(".master");
+      if (m) m.onclick = () => location.href = location.pathname + "?page=mastering&id=" + s.id;
+      list.appendChild(row);
+    });
+  }
+  setInterval(() => {
+    if (songs.some(s => !s.shown && ready(s))) { songs.forEach(s => s.shown = ready(s)); redraw(); }
+  }, 300);
+  document.getElementById("search").addEventListener("input", () => setTimeout(redraw, 300));
+
+  function openMenu(s) {
+    closeAll();
+    const m = document.createElement("div");
+    m.className = "menu";
+    const items = ["MP3 오디오 다운로드", "WAV 오디오 다운로드", "가사 비디오 다운로드", "스크롤 가사 다운로드",
+                   "텍스트 가사 다운로드", "곡 커버 다운로드", "창작 증명서 받기"];
+    // lrclate: 곡이 다 만들어진 뒤 한동안 '스크롤 가사' 메뉴가 안 눌림 (실제 CAVN 처럼 가사 맞추기가 늦게 끝남)
+    const lrcLate = Number(params.get("lrclate") || 0) && Date.now() < s.readyAt + Number(params.get("lrclate"));
+    m.innerHTML = "<div>다운로드 및 내보내기</div>" + items.map(i =>
+      `<div class="item"${i === "스크롤 가사 다운로드" && lrcLate ? ' style="pointer-events:none;opacity:.4"' : ""}>${i}</div>`).join("");
+    m.querySelectorAll(".item").forEach(div => div.onclick = () => {
+      const item = div.textContent;
+      closeAll();
+      const tag = `${s.title}#${s.id}`;
+      if (item.startsWith("MP3")) download(`${s.title}.mp3`, `mp3 ${tag}`);
+      if (item.startsWith("WAV")) prepared("WAV 오디오 다운로드", `${s.title}.wav`, "w".repeat(s.length * 10) + tag);
+      if (item.startsWith("스크롤")) download(`${s.title}.lrc`, `[00:01.00] ${tag}`);
+      if (item.startsWith("곡 커버")) download(`${s.title}.jpeg`, `jpg ${tag}`);
+      if (item.startsWith("가사 비디오") || item.startsWith("창작")) store("badClick", item);
+      if (item.startsWith("텍스트")) {
+        // 실제 화면처럼: 고른 뒤에도 창이 남아 있고, 열려 있는 동안 화면 전체가 막힘(body pointer-events: none)
+        const d = document.createElement("div");
+        d.setAttribute("role", "dialog");
+        d.style.cssText = "position:fixed;left:30%;top:30%;background:#222;padding:20px;pointer-events:auto;z-index:60";
+        d.innerHTML = `<div>텍스트 가사 다운로드 <button class="x"><svg width="10" height="10"></svg></button></div>
+          <button class="c">구간 라벨 유지</button><button class="c">가사 본문만</button>`;
+        document.body.style.pointerEvents = "none";
+        d.querySelector(".x").onclick = () => { d.remove(); document.body.style.pointerEvents = ""; };
+        d.querySelectorAll(".c").forEach(b => b.onclick = () => download(`${s.title}.txt`, `${b.textContent} ${tag}`));
+        document.body.appendChild(d);
+      }
+    });
+    document.body.appendChild(m);
+  }
+
+  document.getElementById("make").onclick = () => {
+    const title = document.getElementById("title").value;
+    const instrumental = document.getElementById("instr").getAttribute("aria-checked") === "true";
+    record("created", {
+      title, instrumental, album: current.left,
+      lyrics: instrumental ? "" : document.getElementById("lyrics").value,
+      style: document.getElementById("style").value,
+      exclude: document.getElementById("exclude").value,
+      gender,
+    });
+    let nextId = load("nextId", 1);
+    const pair = lengths.map(len => ({title, album: current.left, length: len,
+                                      readyAt: Date.now() + genDelay, id: nextId++}));
+    store("nextId", nextId);
+    songs = pair.concat(songs); store("songs", songs);
+    albums[current.left] += 2; store("albums", albums);
+    redraw();
+  };
+  redraw();
+}
+</script>
+</body>
+</html>

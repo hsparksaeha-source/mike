@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 Flow</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #000; color: #eee; }
+  #side { position: fixed; left: 0; top: 0; bottom: 0; width: 200px; padding: 10px; box-sizing: border-box; }
+  #top { position: fixed; right: 20px; top: 10px; }
+  #grid { position: absolute; left: 220px; top: 60px; right: 20px; bottom: 0; overflow: auto; }
+  .tile { display: inline-block; position: relative; width: 240px; height: 135px; margin: 6px;
+          background: #333; border-radius: 10px; vertical-align: top; }
+  .tile img, .tile video { width: 240px; height: 135px; display: block; }
+  .tile .label { position: absolute; left: 8px; bottom: 6px; font-size: 12px; }
+  .tile .acts { position: absolute; right: 6px; top: 6px; display: none; }
+  .tile:hover .acts { display: block; }
+  .menu { position: fixed; background: #222; border: 1px solid #777; padding: 6px; z-index: 9; }
+  .menu div { padding: 4px 8px; cursor: pointer; }
+  #promptWrap { position: fixed; left: 35%; width: 30%; bottom: 20px; background: #222; padding: 10px; border-radius: 12px; z-index: 5; }
+  #prompt { min-height: 40px; outline: none; }
+  #attach img { width: 60px; }
+</style>
+</head>
+<body>
+<div id="side">
+  <div>바하2</div>
+  <div>전체 미디어</div><div>캐릭터</div><div>이미지</div><div>동영상</div>
+  <div><span>라이브러리</span> <button id="libPlus"><svg width="12" height="12"></svg></button></div>
+  <div id="lib"></div>
+</div>
+<div id="topbar" style="position:fixed;left:400px;top:12px"><input placeholder="" style="width:500px">
+  <button title="filter"><svg width="12" height="12"></svg></button></div>
+<div id="top" style="position:fixed;right:340px;top:12px"><button id="plus"><svg width="14" height="14"></svg></button> <button><svg width="14" height="14"></svg></button>
+  <button><svg width="14" height="14"></svg></button> <button><svg width="14" height="14"></svg></button></div>
+<div id="grid"></div>
+<div id="promptWrap">
+  <div id="attach"></div>
+  <div id="promptHost"></div>
+  <button id="addAsset">add</button> <button id="agent">에이전트</button> <button id="send">arrow_forward</button>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const delay = Number(params.get("delay") || 800);
+const zipMode = params.get("zip") !== "0";   // 컬렉션을 zip 하나로 줄지, 낱개 파일로 줄지
+let items = [];        // {id, kind: image|video|collection, label, members}
+let nextId = 1;
+let attachment = null;
+let dragging = null;
+window.requests = [];
+window.collections = [];
+
+const svg = id => "data:image/svg+xml," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="135"><rect width="240" height="135" fill="#${(id * 999999 % 0xffffff).toString(16).padStart(6, "0")}"/><text x="10" y="70">${id}</text></svg>`);
+
+function closeMenus() {
+  document.querySelectorAll(".menu").forEach(m => {
+    // stalemenu: 그림·컬렉션 메뉴가 닫혀도 화면에 남아 있는 경우 (그 안의 글을 누르면 예전 칸이 받아짐)
+    if (params.get("stalemenu") === "1" && m.dataset.item) m.dataset.stale = "1"; else m.remove();
+  });
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenus(); });
+
+function crc32(buf) {
+  let crc = 0xFFFFFFFF;
+  for (let n = 0; n < buf.length; n++) {
+    let c = (crc ^ buf[n]) & 0xFF;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data), len = data.length;
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint32(14, crc, true);
+    h.setUint32(18, len, true); h.setUint32(22, len, true); h.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(h.buffer), name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true);
+    c.setUint32(16, crc, true); c.setUint32(20, len, true); c.setUint32(24, len, true);
+    c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+    central.push(new Uint8Array(c.buffer), name);
+    offset += 30 + name.length + len;
+  }
+  const size = central.reduce((a, b) => a + b.length, 0);
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, size, true); e.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(e.buffer)]);
+}
+function download(name, blob) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function openMenu(item, button) {
+  closeMenus();
+  const m = document.createElement("div");
+  m.className = "menu";
+  m.dataset.item = item.id;
+  const r = button.getBoundingClientRect();
+  m.style.left = r.left + "px"; m.style.top = r.bottom + "px";
+  const entries = item.kind === "collection" ? ["즐겨찾기", "컬렉션 다운로드", "이름 바꾸기"] : ["즐겨찾기", "다운로드"];
+  m.innerHTML = entries.map(t => `<div>${t}</div>`).join("");
+  m.querySelectorAll("div").forEach(d => d.onclick = () => {
+    if (d.textContent === "컬렉션 다운로드") {
+      closeMenus();
+      if (params.get("nozip") === "1") return;   // 컬렉션 다운로드가 아무 일도 안 일어나는 경우
+      const files = item.members.map(id => ({name: `${(items.find(i => i.id === id) || {label: "image " + id}).label.replace(/ /g, "_")}_${(0xabc000 + id).toString(16)}.jpg`,
+                                             text: `image ${id}`}));
+      if (zipMode) {   // 실제 Flow 처럼 새 창이 열리고 그 창에서 내려받음
+        const w = window.open("about:blank");
+        const a = w.document.createElement("a");
+        a.href = URL.createObjectURL(makeZip(files)); a.download = "collection.zip";
+        w.document.body.appendChild(a); a.click();
+      }
+      else {
+        files.forEach((f, i) => setTimeout(() => download(f.name, new Blob([new Uint8Array([0xff, 0xd8, 0xff]), f.text])), i * 400));
+        window.open("about:blank");   // 다운로드 때문에 새 창이 열리는 경우
+      }
+    }
+    if (d.textContent === "다운로드" && item.kind === "image") {   // 그림 한 장 받기 (크기 고르는 메뉴)
+      m.innerHTML = "<div role='menuitem'>1K</div><div role='menuitem'>2K</div>";
+      m.querySelector("div").onclick = () => {
+        closeMenus();
+        download(`${item.label.replace(/ /g, "_")}_${(0xabc000 + item.id).toString(16)}.jpg`,
+                 new Blob([new Uint8Array([0xff, 0xd8, 0xff]), `image ${item.id}`]));
+      };
+    }
+    if (d.textContent === "다운로드" && item.kind === "video") {
+      m.innerHTML = "<div role='menuitem'>원본 크기(720p)</div><div role='menuitem'>1080p로 업스케일</div>";
+      m.querySelector("div").onclick = () => { closeMenus(); download(`video_${item.id}.mp4`, new Blob(["\x00\x00\x00\x18ftypmp42" + `video ${item.id}`])); };
+    }
+  });
+  document.body.appendChild(m);
+}
+
+function draw() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  items.forEach(item => {
+    // vanish: 컬렉션에 넣은 그림은 격자에서 사라지는 경우
+    if (params.get("vanish") === "1" && item.kind === "image" && items.some(c => c.kind === "collection" && c.members.includes(item.id))) return;
+    const t = document.createElement("div");
+    t.className = "tile";
+    if (item.kind === "collection") {
+      t.innerHTML = `<div class="label">제목 없는 컬렉션 ${item.members.length ? item.members.length : ""}</div>`;
+      t.addEventListener("dragover", e => e.preventDefault());
+      t.addEventListener("drop", e => {
+        e.preventDefault();
+        if (dragging && dragging.kind === "image" && !item.members.includes(dragging.id)) item.members.push(dragging.id);
+        if (params.get("rekeydrag") === "1")   // 넣을 때마다 모든 그림 주소가 바뀌는 경우
+          items.forEach(it => { if (it.kind === "image") it.rev = (it.rev || 0) + 1; });
+        draw();
+      });
+    } else if (item.kind === "failed") {   // 실제 Flow 처럼: 그림 없이 '실패' 안내와 아이콘 버튼만
+      t.innerHTML = `<div class="label">warning 실패 Flow의 수요가 많습니다. 나중에 다시 시도해 주세요.</div>
+        <button class="redo">refresh</button>`;
+      t.querySelector(".redo").onclick = () => { window.gridRetry = (window.gridRetry || 0) + 1; };
+    } else if (item.kind === "image") {
+      t.draggable = true;
+      t.innerHTML = `<img src="${svg(item.id + (item.rev || 0) * 100000)}" draggable="false"><div class="label">image ${params.get("notitle") === "1" ? "" : item.label}</div>`;
+    } else {
+      // 실제처럼 영상 칸 위쪽에 늘 보이는 재생 단추 (눌리면 영상이 움직임)
+      t.innerHTML = `<video src="data:video/mp4;base64,AAAA" poster="${svg(9000 + item.id + (item.rev || 0) * 100000)}"></video>` +
+                    `<button class="playbtn" style="position:absolute;left:8px;top:8px">play_arrow</button>` +
+                    `<div class="label">play_circle ${item.label}</div>`;
+    }
+    t.innerHTML += `<div class="acts"><button>favorite</button><button class="more">more_vert</button></div>`;
+    t.addEventListener("dragstart", () => dragging = item);
+    const pb = t.querySelector(".playbtn");
+    if (pb) pb.onclick = () => { window.videoPlayed = (window.videoPlayed || 0) + 1; };
+    t.querySelector(".more").onclick = e => openMenu(item, e.target);
+    grid.appendChild(t);
+  });
+  document.getElementById("lib").innerHTML =
+    items.filter(i => i.kind === "collection").map(() => "<div>제목 없는 컬렉션</div>").join("");
+  window.collections = items.filter(i => i.kind === "collection").map(i => [...i.members]);
+}
+
+const shadow = document.getElementById("promptHost").attachShadow({mode: "open"});
+shadow.innerHTML = `<div id="prompt" contenteditable="true" data-placeholder="무엇을 만들고 싶으신가요?"
+  style="min-height:40px;outline:none;color:#eee"></div>`;
+let prompt = shadow.getElementById("prompt");
+const wrap = document.getElementById("promptWrap");
+wrap.addEventListener("dragover", e => e.preventDefault());
+wrap.addEventListener("drop", e => {
+  e.preventDefault();
+  if (dragging && dragging.kind === "image") {
+    if (params.get("noattach") === "1" && !window.dropIgnored) { window.dropIgnored = true; return; }   // 처음 끌어다 놓기는 안 됨
+    attachment = dragging;
+    document.getElementById("attach").innerHTML = `<img src="${svg(dragging.id)}">`;
+  }
+});
+
+function panel() {
+  let p = document.getElementById("agentPanel");
+  if (!p) {
+    p = document.createElement("div");
+    p.id = "agentPanel";
+    p.style.cssText = "position:fixed;right:0;top:90px;bottom:0;width:320px;background:#111;z-index:8;overflow:auto";
+    p.innerHTML = `<div style="height:40px"><button aria-label="New session" class="ns"><svg width="14" height="14"></svg></button>
+      <button aria-label="닫기"><svg width="14" height="14"></svg></button></div><div id="chat"></div>`;
+    p.querySelector(".ns").onclick = () => { window.wrongMenu = "새 세션"; };
+    document.body.appendChild(p);
+    wrap.style.cssText = "position:static;width:auto;margin:6px;background:#222;padding:10px";
+    p.appendChild(wrap);
+    document.getElementById("grid").style.right = "340px";
+  }
+  return document.getElementById("chat");
+}
+
+function submit() {
+  const text = prompt.innerText.trim();
+  if (!text) {
+    if (window.pendingOk) { const ok = window.pendingOk; window.pendingOk = null; window.sendApproved = true; ok(); }
+    return;
+  }
+  const chat = panel();
+  window.requests.push({text, attachment: attachment && attachment.id, chars: window.attachedChars});
+  window.attachedChars = [];
+  const fresh = prompt.cloneNode(false);   // 실제 Flow 처럼 보낸 뒤 입력칸을 새로 그림
+  fresh.addEventListener("keydown", onKey);
+  prompt.replaceWith(fresh);
+  prompt = fresh;
+  const att = attachment;
+  attachment = null; document.getElementById("attach").innerHTML = "";
+  const m = text.match(/(\d+)장/);
+  if (!att && !m && /영상/.test(text)) {   // 이미지 없이 영상을 부탁하면 에이전트가 이미지를 물어봄
+    chat.insertAdjacentHTML("beforeend", "<p>영상을 생성하기 위해 기반으로 사용할 이미지를 선택해 주세요.</p>");
+    window.askedImage = (window.askedImage || 0) + 1;
+    return;
+  }
+  if (att && params.get("videorefuse") === "1") {   // 유명인과 닮았다며 영상을 거절하는 경우
+    chat.insertAdjacentHTML("beforeend", "<p>죄송합니다. 이 이미지는 실존 인물과 닮아 Google 정책상 동영상을 생성할 수 없습니다.</p>");
+  } else if (att) {
+    if (params.get("newthread") === "1") chat.innerHTML = "";   // 새 대화
+    // 질문과 버튼은 승인한 뒤에도 대화 창에 그대로 남고, '승인' 말풍선과 영상 미리보기가 붙는다
+    const ask = document.createElement("div");
+    ask.innerHTML = `<p>15 크레딧을 사용하여 1개 동영상 생성을 시작하시겠습니까?</p>
+      <div class="ok"><span>check</span> <span>승인</span></div><div class="always"><span>check</span> <span>항상 승인</span></div>
+      <div class="no"><span>close</span> <span>거부</span></div>`;
+    chat.appendChild(ask);
+    if (params.get("hideapprove") === "1") {   // [승인]·[거부] 칸이 안 보이는 경우 → 빈 칸에서 보내기 화살표
+      ask.querySelectorAll(".ok, .always, .no").forEach(d => d.style.display = "none");
+      window.pendingOk = () => ask.querySelector(".ok").onclick();
+    }
+    if (params.get("videorekey") === "1")   // 예전 영상 칸의 주소가 바뀌는 경우 (새 영상처럼 보임)
+      items.forEach(it => { if (it.kind === "video") it.rev = (it.rev || 0) + 1; });
+    ask.querySelector(".always").onclick = () => { window.alwaysClicked = true; };
+    ask.querySelector(".ok").onclick = () => {   // 안쪽 '승인' 글씨를 눌러도 이 칸으로 전달됨
+      window.approved = (window.approved || 0) + 1;
+      if (window.approved > window.requests.filter(r => r.attachment).length) return;   // 같은 질문 또 누름
+      chat.insertAdjacentHTML("beforeend", "<div class='bubble'>승인</div>");
+      setTimeout(() => {
+        const id = nextId++;
+        items.unshift({id, kind: "video", label: "Drone video " + id, from: att.id}); draw();
+        chat.insertAdjacentHTML("beforeend", `<div style="position:relative;width:240px;height:135px">
+          <video src="data:video/mp4;base64,AAAA" poster="${svg(8000 + id)}" style="width:240px;height:135px"></video>
+          <span>play_circle</span></div><p>영상 생성을 시작했습니다</p>`);
+      }, delay);
+    };
+  } else if (m) {
+    const n = Number(m[1]);
+    const fail = Number(params.get("fail") || 0);   // 끝의 몇 장은 '실패' 카드로
+    const make = () => {
+      for (let i = 0; i < n; i++) {   // 하나씩 생기고, 새 것이 앞에 붙는다
+        setTimeout(() => { const id = nextId++; items.unshift({id, kind: i >= n - fail ? "failed" : "image", label: "Frozen lake " + id}); draw(); },
+                   delay + i * 60);
+      }
+      if (params.get("rekey") === "1")   // 다 만들고 조금 뒤 그림 주소가 바뀌는 경우
+        setTimeout(() => { items.forEach(it => { if (it.kind === "image") it.rev = (it.rev || 0) + 1; }); draw(); },
+                   delay + n * 60 + 12000);
+    };
+    if (params.get("retry") === "1" && !window.retryShown) {   // 처음 요청은 오류 → [다시 시도]를 눌러야 진행
+      window.retryShown = true;
+      const err = document.createElement("div");
+      err.innerHTML = `<p>문제가 발생했습니다.</p><button class="again"><span>refresh</span> <span>다시 시도</span></button>`;
+      chat.appendChild(err);
+      err.querySelector(".again").onclick = () => { window.retryClicked = (window.retryClicked || 0) + 1; err.remove(); make(); };
+    } else make();
+  }
+}
+function onKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }
+prompt.addEventListener("keydown", onKey);
+document.getElementById("send").onclick = submit;
+
+// 프롬프트 칸의 [+]: 애셋 고르기 창 (실제 Flow 처럼: 왼쪽 위 프로젝트 고르기, 애셋 검색, 왼쪽 종류, 오른쪽 미리보기)
+const charProjects = {"캐릭터목록": ["마태오", "쥴리", "브루노", "안나", "서준", "소라", "정우", "순자"],
+                      "낭만 캐롤1집": []};
+window.attachedChars = [];
+document.getElementById("addAsset").onclick = () => {
+  if (document.getElementById("picker")) return;
+  const pk = document.createElement("div");
+  pk.id = "picker";
+  pk.style.cssText = "position:fixed;right:10px;bottom:100px;width:690px;height:520px;background:#222;z-index:20";
+  let project = "10월 28 - 18:23", kind = "전체", query = "", chosen = null;
+  const paint = () => {
+    const names = kind === "캐릭터" ? (charProjects[project] || []).filter(n => n.includes(query)) : [];
+    pk.innerHTML = `
+      <div style="position:absolute;left:10px;top:10px"><button class="proj">${project} <span class="arr">arrow_drop_down</span></button></div>
+      ${params.get("wrapsearch") === "1"   // 실제처럼 검색칸이 종류 칸은 빠진 큰 상자 안에 들어 있는 경우
+        ? `<div style="position:absolute;left:220px;top:0;width:465px;height:300px"><div style="position:absolute;left:10px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:380px"></div></div>`
+        : `<div style="position:absolute;left:230px;top:10px"><span>search</span> <input class="q" placeholder="애셋 검색" value="${query}" style="width:380px"></div>`}
+      <div style="position:absolute;left:10px;top:60px" class="kinds">
+        ${["전체", "이미지", "동영상", "음성", "캐릭터", "아바타", "업로드"].map(k => `<div class="k" style="padding:6px">${k}</div>`).join("")}</div>
+      <div style="position:absolute;left:230px;top:60px;width:200px" class="list">
+        ${names.length ? names.map(n => `<div class="c" style="padding:8px"><img src="${svg(n.length)}" style="width:20px"> <span>${n}</span></div>`).join("")
+                        : "<div>애셋이 없습니다.</div>"}</div>
+      ${chosen ? `<div style="position:absolute;left:450px;top:60px">${chosen} 미리보기<br><button class="addp">프롬프트에 추가</button></div>` : ""}`;
+    pk.querySelector(".arr").onclick = () => {   // 실제처럼 날짜 옆 아래 화살표를 눌러야 프로젝트 목록이 펼쳐짐
+      const m = document.createElement("div");
+      m.style.cssText = "position:absolute;left:10px;top:40px;background:#333;z-index:21;max-height:220px;overflow:auto";
+      // 프로젝트가 많으면 '캐릭터목록' 이 목록 아래쪽에 있어서 내려야 보임
+      const many = params.get("manyprojects") === "1"
+        ? [...Array(30).keys()].map(i => `10월 ${i + 1} - 0${i % 10}:00`) : ["10월 28 - 18:23"];
+      m.innerHTML = [...many, "캐릭터목록", "낭만 캐롤1집"].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
+      m.querySelectorAll(".p").forEach(d => d.onclick = () => { project = d.textContent; chosen = null; paint(); });
+      pk.appendChild(m);
+    };
+    pk.querySelectorAll(".k").forEach(d => d.onclick = () => { kind = d.textContent; paint(); });
+    const q = pk.querySelector(".q");
+    q.oninput = () => { query = q.value; setTimeout(() => { paint(); const nq = pk.querySelector(".q"); nq.focus(); }, 200); };
+    pk.querySelectorAll(".c").forEach(d => d.onclick = () => {
+      chosen = d.querySelector("span").textContent;
+      if (params.get("directadd") === "1") {   // 이름을 누르면 바로 프롬프트에 올라가고 창이 닫히는 경우
+        window.attachedChars.push(chosen);
+        document.getElementById("attach").insertAdjacentHTML("beforeend", `<img src="${svg(chosen.length)}" style="width:20px">`);
+        pk.remove();
+        return;
+      }
+      paint();
+    });
+    const add = pk.querySelector(".addp");
+    if (add) add.onclick = () => {
+      window.attachedChars.push(chosen);
+      document.getElementById("attach").insertAdjacentHTML("beforeend", `<img src="${svg(chosen.length)}" style="width:20px">`);
+      if (params.get("stickypicker") !== "1") pk.remove();   // stickypicker: 올린 뒤에도 창이 열린 채로 남는 경우
+    };
+  };
+  if (params.get("slowpicker") === "1") {   // 창이 열리고 왼쪽 위 프로젝트 칸이 늦게 그려지는 경우
+    pk.innerHTML = `<div style="position:absolute;left:230px;top:10px"><input class="q" placeholder="애셋 검색"></div>`;
+    setTimeout(paint, 2500);
+  } else paint();
+  document.body.appendChild(pk);
+};
+
+document.addEventListener("keydown", e => {   // Esc 로 애셋 고르기 창 닫기
+  if (e.key === "Escape") { const pk = document.getElementById("picker"); if (pk) pk.remove(); }
+});
+
+document.getElementById("libPlus").onclick = () => {   // 라이브러리 [+]: 바로 새 컬렉션
+  items.unshift({id: nextId++, kind: "collection", members: []}); draw();
+};
+document.getElementById("plus").onclick = () => {
+  if (params.get("plusbroken") === "1") return;   // 위쪽 [+] 메뉴가 안 뜨는 경우
+  closeMenus();
+  const m = document.createElement("div");
+  m.className = "menu"; m.style.right = "20px"; m.style.top = "40px";
+  m.innerHTML = "<div role='menuitem'>upload 업로드</div><div role='menuitem'>create_new_folder 새 컬렉션</div>" +
+                "<div role='menuitem'>person 캐릭터 만들기</div><div role='menuitem'>movie 새로운 장면</div>";
+  m.querySelectorAll("div")[2].onclick = () => { window.wrongMenu = "캐릭터"; };
+  m.querySelectorAll("div")[1].onclick = () => {
+    closeMenus(); items.unshift({id: nextId++, kind: "collection", members: []}); draw();
+  };
+  document.body.appendChild(m);
+};
+
+// 이전 작업물이 조금 있는 상태에서 시작
+items.push({id: nextId++, kind: "image", label: "old"}, {id: nextId++, kind: "collection", members: [1]});
+draw();
+</script>
+</body>
+</html>
