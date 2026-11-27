@@ -82,6 +82,7 @@ class Thumb:
     options: list = field(default_factory=list)   # 한글 문구들 (한 개 = 썸네일 한 장)
     english: list = field(default_factory=list)   # 왼쪽 위 영어 문구 (줄들)
     en_options: list = field(default_factory=list)   # 영문 썸네일 문구들 (한 개 = 영문 썸네일 한 장)
+    prompts: list = field(default_factory=list)   # 배경 이미지 프롬프트 여러 안 (메인: 앨범 대표 썸네일 이미지 3종)
 
 
 SINGLE_RE = re.compile(r"^Single\s*(\d+)\s*[.:]\s*(.+)$", re.I)
@@ -181,13 +182,17 @@ def parse_thumbnails(text):
                         thumb.en_options.append(opt)
                         if not thumb.english:
                             thumb.english = opt.lines
-        elif not thumb.prompt and (("썸네일" in name_part and "이미지" in name_part)
-                                   or re.match(r"^대표 이미지", name_part)):
+        elif (("썸네일" in name_part and "이미지" in name_part) or re.match(r"^(앨범\s*)?대표 (썸네일 )?이미지", name_part)
+              or re.match(r"^썸네일\s*\d", name_part)):   # '**썸네일 1 오두막 앞 눈사람**' 처럼 박스마다 하나씩
             cm = CODE_RE.search(body)
             if cm:
-                # '[1 눈 덮인 마을] …' 처럼 여러 안이 한 블록에 있으면 첫 번째 것만
-                first = re.split(r"\n\s*\n|\n(?=\s*\[)", cm.group(1).strip())[0]
-                thumb.prompt = re.sub(r"^\s*\[[^\]]*\]\s*", "", re.sub(r"\s*\n\s*", " ", first)).strip()
+                # '[1 도서관] … [2 별빛 온실] … [3 달빛 호수] …' 처럼 여러 안이 한 블록에 있으면 안마다 하나씩
+                items = [re.sub(r"^\s*\[[^\]]*\]\s*", "", re.sub(r"\s*\n\s*", " ", it)).strip()
+                         for it in re.split(r"\n\s*\n|\n(?=\s*\[)", cm.group(1).strip())]
+                for it in items:
+                    if it and it not in thumb.prompts:
+                        thumb.prompts.append(it)
+                thumb.prompt = thumb.prompt or (thumb.prompts[0] if thumb.prompts else "")
 
     result = [thumbs[n] for n in order if thumbs[n].options]
     fill_prompts_from_tracks(result, text)
@@ -562,6 +567,15 @@ def run(md_path, out_root, use_flow=True, capcut_dir=None, page=None, confirm=Tr
     if not thumbs:
         print("이 md 파일에서 썸네일 문구를 찾지 못했습니다.")
         return []
+    # 메인에 배경 이미지 프롬프트가 여러 안(앨범 대표 썸네일 이미지 3종)이면 안마다 메인 썸네일 한 벌씩
+    expanded = []
+    for t in thumbs:
+        if t.name == "메인" and len(t.prompts) > 1:
+            for k, p in enumerate(t.prompts, 1):
+                expanded.append(Thumb(f"메인{k}", t.title, p, t.options, t.english, t.en_options, [p]))
+        else:
+            expanded.append(t)
+    thumbs = expanded
     todo_bg = []
     for t in thumbs:
         bg_dir = out_dir / "배경" / t.name

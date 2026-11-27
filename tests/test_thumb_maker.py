@@ -248,3 +248,57 @@ def test_thumbnail_prompts_from_each_track_section():
     main, single = thumb_maker.parse_thumbnails(POP_THUMB)
     assert main.prompt == "young man by a window at dusk"            # 메인은 타이틀곡
     assert single.prompt == "young woman waking up slowly in a sunlit bedroom"   # 싱글은 같은 제목 곡
+
+
+MAIN3 = """# PART A: 앨범 영상 · 썸네일 가이드
+
+### 앨범 대표 썸네일 이미지 3종 (택일 또는 클릭률 비교)
+```
+[1 도서관] An old library at night, 16:9, no people
+[2 별빛 온실] A glass greenhouse at night, 16:9, no people
+[3 달빛 호수] A calm lake under a full moon, 16:9, no people
+```
+
+# PART B: 유튜브 SEO 패키지
+
+### 썸네일 문구 → 텍스트 박스 (한글 1안)
+```
+메인: 잠들기 전, 피아노와 첼로
+서브: 10시간 · 수면유도음악
+```
+
+### 썸네일 문구 2안 → 텍스트 박스 (한글 2안)
+```
+메인: 오늘 밤은 조용히 쉬어요
+서브: 피아노와 첼로가 들려주는 10시간
+```
+
+### 썸네일 문구 (English) → 텍스트 박스 (1안)
+```
+Main: Sleep Deeply Tonight
+Sub: 10 Hours of Piano & Cello
+```
+
+### 썸네일 문구 (English) 2안 → 텍스트 박스 (2안)
+```
+Main: Quiet Night, Piano and Cello
+Sub: 10 Hours · Deep Sleep Music
+```
+"""
+
+
+def test_three_main_background_prompts_make_three_sets(tmp_path):
+    [main] = thumb_maker.parse_thumbnails(MAIN3)
+    assert [p.split(",")[0] for p in main.prompts] == [
+        "An old library at night", "A glass greenhouse at night", "A calm lake under a full moon"]
+    assert len(main.options) == 2 and len(main.en_options) == 2
+    md = tmp_path / "피아노첼로.md"
+    md.write_text(MAIN3, encoding="utf-8")
+    album = tmp_path / "out" / "피아노첼로"
+    from PIL import Image
+    for k in (1, 2, 3):   # 배경 3벌을 미리 넣어 둠 (Flow 없이)
+        (album / "썸네일" / "배경" / f"메인{k}").mkdir(parents=True)
+        Image.new("RGB", (1376, 768), (30 * k, 40, 80)).save(album / "썸네일" / "배경" / f"메인{k}" / "a.jpg")
+    made = thumb_maker.run(md, tmp_path / "out", use_flow=False, capcut_dir=tmp_path / "drafts", confirm=False)
+    names = sorted(p.name for p in made)
+    assert len(names) == 12 and "메인1_영문1.jpg" in names and "메인3_문구_2.jpg" in names
