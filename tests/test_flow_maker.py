@@ -467,3 +467,27 @@ def test_images_only_without_video(tmp_path, monkeypatch):
     assert not (out / "앨범" / "장면").exists() or not list((out / "앨범" / "장면").iterdir())
     assert flow_maker.track_done(folder, out / "앨범" / "장면", 1, 15, need_video=False)
     assert not flow_maker.track_done(folder, out / "앨범" / "장면", 1, 15)
+
+
+def test_classical_track_with_characters_from_own_project(tmp_path, monkeypatch):
+    """클래식(이미지 프롬프트가 있는 곡)도 md '주인공 캐릭터' 칸의 이름(누니·야니)을
+    캐릭터목록.txt 의 묶음에 적힌 Flow 프로젝트('누니 야니')에서 올린 뒤 이미지를 요청한다."""
+    monkeypatch.setattr(flow_maker, "DOWNLOADS_DIR", tmp_path / "Downloads")
+    import cast
+    (tmp_path / "캐릭터목록.txt").write_text(
+        "프로젝트: 캐릭터목록\n[칸쏘네1]\n여: 쥴리\n남: 마태오\n\n[클래식]\n프로젝트: 누니 야니\n캐릭터: 누니, 야니\n",
+        encoding="utf-8")
+    monkeypatch.setattr(cast, "CAST_FILE", tmp_path / "캐릭터목록.txt")
+    md_text = EASY_MD.replace("### 뮤직 비디오 콘셉트", "### 주인공 캐릭터\n\n```\n누니와 야니\n```\n\n### 뮤직 비디오 콘셉트", 1)
+    md = tmp_path / "헨델풍.md"
+    md.write_text(md_text, encoding="utf-8")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
+        context = browser.new_context(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
+        page = context.new_page()
+        page.goto(f"{MOCK}?delay=300&zip=1")
+        flow_maker.run(md, tmp_path / "out", page=page, confirm=False, n_images=15, videos=False)
+        requests = page.evaluate("window.requests")
+        browser.close()
+    assert requests[0]["chars"] == ["누니", "야니"]
+    assert requests[0]["text"].startswith("photorealistic photograph of a quiet snow-covered street")

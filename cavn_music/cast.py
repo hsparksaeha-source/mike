@@ -11,6 +11,12 @@
   1) md 의 '## 주인공 캐릭터' 칸
   2) 없으면 곡의 남·여 가수 표시 (여성 → 첫 여자, 남성 → 첫 남자, 둘 다/모름 → 첫 여자 + 첫 남자)
 실행할 때 곡마다 '여' / '남' / '둘' 이나 이름(띄어 쓰기)으로 바꿀 수 있다.
+
+클래식처럼 남·여가 아닌 캐릭터 묶음은 '캐릭터:' 로 적고, 묶음마다 Flow 프로젝트를 따로 줄 수 있다.
+  [클래식]
+  프로젝트: 누니 야니
+  캐릭터: 누니, 야니
+곡마다 md 의 '주인공 캐릭터' 칸에 적힌 이름만 올린다 (이미지 프롬프트가 있는 곡도).
 """
 
 import re
@@ -21,21 +27,25 @@ DEFAULT_PROJECT = "캐릭터목록"
 TRAITS_SECTION = re.compile(r"^(인물\s*설명|설명|키)$")
 
 
-def load_cast(path=None):
-    """(Flow 프로젝트 이름, {묶음: {'여': [...], '남': [...]}})"""
+def _read_groups(path=None):
+    """(전체 프로젝트, {묶음: {'여': [...], '남': [...], '캐릭터': [...], '프로젝트': 이름 또는 None}})"""
     path = path or CAST_FILE
     project, groups, cur = DEFAULT_PROJECT, {}, None
     try:
         text = Path(path).read_text(encoding="utf-8-sig")
     except OSError:
         return project, groups
+    split = lambda v: [n.strip() for n in re.split(r"[,，、]", v) if n.strip()]
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         m = re.match(r"^프로젝트\s*[:：]\s*(.+)$", line)
         if m:
-            project = m.group(1).strip()
+            if cur:   # 묶음 안의 '프로젝트:' 는 그 묶음만의 Flow 프로젝트
+                groups[cur]["프로젝트"] = m.group(1).strip()
+            else:
+                project = m.group(1).strip()
             continue
         m = re.match(r"^\[(.+)\]$", line)
         if m:
@@ -43,12 +53,37 @@ def load_cast(path=None):
             if TRAITS_SECTION.match(cur):   # [인물 설명] 은 묶음이 아님
                 cur = None
                 continue
-            groups[cur] = {"여": [], "남": []}
+            groups[cur] = {"여": [], "남": [], "캐릭터": [], "프로젝트": None}
             continue
-        m = re.match(r"^(여|남)\s*[:：]\s*(.*)$", line)
+        m = re.match(r"^(여|남|캐릭터)\s*[:：]\s*(.*)$", line)
         if m and cur:
-            groups[cur][m.group(1)] += [n.strip() for n in re.split(r"[,，、]", m.group(2)) if n.strip()]
+            groups[cur][m.group(1)] += split(m.group(2))
     return project, groups
+
+
+def load_cast(path=None):
+    """(Flow 프로젝트 이름, {묶음: {'여': [...], '남': [...]}}) — 가요·칸쏘네용 남·여 묶음만."""
+    project, groups = _read_groups(path)
+    return project, {k: {"여": v["여"], "남": v["남"]} for k, v in groups.items() if v["여"] or v["남"]}
+
+
+def find_characters(text, path=None):
+    """md '주인공 캐릭터' 칸의 글 → (Flow 프로젝트, [이름…]). 어느 묶음에도 없으면 ValueError.
+    '없음' 이나 빈칸이면 (None, [])."""
+    text = (text or "").strip()
+    if not text or re.fullmatch(r"(없음|없다|none|-|x)", text, re.I):
+        return None, []
+    project, groups = _read_groups(path)
+    for g in groups.values():
+        known = g["캐릭터"] + g["여"] + g["남"]
+        if not known:
+            continue
+        try:
+            names = parse_names(text, {"여": known, "남": []})
+        except ValueError:
+            continue
+        return g["프로젝트"] or project, names
+    raise ValueError(f"캐릭터목록에 없는 이름: {text}")
 
 
 def load_traits(path=None):

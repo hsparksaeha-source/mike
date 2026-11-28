@@ -1588,7 +1588,7 @@ def lyric_prompt(track):
 
 
 def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_video=False, cast=None, project=None,
-               want_video=True):
+               want_video=True, chars=None, chars_project=None):
     """cast(캐릭터 이름 목록)가 있으면 가요·칸쏘네 방식: 캐릭터 + 곡 제목 + 가사로 이미지, 가사에 맞게 영상.
     want_video=False 이면 영상은 만들지 않고 이미지만."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -1639,7 +1639,8 @@ def make_track(flow, track, folder, scene_dir, n_images, reuse=False, reuse_vide
         images = request_images(flow, prompt, n_images, request=request,
                                 characters=cast, project=project)
     else:
-        images = request_images(flow, track.image_prompt, n_images)
+        # 이미지 프롬프트가 있는 곡(클래식 등)도 md '주인공 캐릭터' 칸에 이름이 있으면 그 캐릭터를 먼저 올린다
+        images = request_images(flow, track.image_prompt, n_images, characters=chars or (), project=chars_project)
     save_state(folder, images=[img["key"] for img in images], titles=[img.get("text", "") for img in images])
 
     have_video = video_path(scene_dir, track.number) is not None
@@ -1876,6 +1877,22 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
                 cast_map.update(ask_cast(missing, groups[group]))
             else:
                 cast_map.update({t.number: default_names(t, groups[group]) for t in missing})
+    # 이미지 프롬프트가 있는 곡의 '주인공 캐릭터' (클래식의 누니·야니 등): 캐릭터목록.txt 의 묶음에서 찾는다
+    prompt_chars = {}
+    for t in todo:
+        if t.image_prompt and t.cast:
+            from cast import find_characters
+            try:
+                chars_project, names = find_characters(t.cast)
+            except ValueError as e:
+                print(f"  !! {t.number}번 곡 주인공 '{t.cast}': {e} → 캐릭터 없이 만듭니다")
+                continue
+            if names:
+                prompt_chars[t.number] = (names, chars_project)
+    if prompt_chars:
+        print("캐릭터를 올려서 만들 곡: " + ", ".join(
+            f"{n}번({'·'.join(v[0])})" for n, v in sorted(prompt_chars.items())) +
+            f"  (Flow 프로젝트 '{next(iter(prompt_chars.values()))[1]}')")
     if confirm and input("시작할까요? (y/n): ").strip().lower() not in ("y", "yes", "ㅛ"):
         return
     reuse_first = reuse_video_first = False
@@ -1894,11 +1911,13 @@ def run(md_path, out_root, only=None, dry_run=False, page=None, confirm=True, n_
             log(f"[{i}/{len(todo)}] {t.number}. {t.title}")
             try:
                 names = cast_map.get(t.number) if not t.image_prompt else None
-                if names:
-                    log(f"  주인공: {', '.join(names)}")
+                chars, chars_project = prompt_chars.get(t.number, (None, None))
+                if names or chars:
+                    log(f"  주인공: {', '.join(names or chars)}")
                 make_track(flow, t, image_folder(out_dir, t.number), scene_dir, n_images,
                            reuse=reuse_first and i == 1, reuse_video=reuse_video_first and i == 1,
-                           cast=names, project=project, want_video=videos)
+                           cast=names, project=project, want_video=videos,
+                           chars=chars, chars_project=chars_project)
             except Exception as e:  # 한 트랙이 실패해도 다음 트랙은 계속
                 log(f"  !! 실패: {e}")
                 failed.append(t)

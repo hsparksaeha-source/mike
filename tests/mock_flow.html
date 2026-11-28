@@ -292,7 +292,7 @@ document.getElementById("send").onclick = submit;
 
 // 프롬프트 칸의 [+]: 애셋 고르기 창 (실제 Flow 처럼: 왼쪽 위 프로젝트 고르기, 애셋 검색, 왼쪽 종류, 오른쪽 미리보기)
 const charProjects = {"캐릭터목록": ["마태오", "쥴리", "브루노", "안나", "서준", "소라", "정우", "순자"],
-                      "낭만 캐롤1집": []};
+                      "낭만 캐롤1집": [], "누니 야니": ["누니", "야니"]};
 window.attachedChars = [];
 document.getElementById("addAsset").onclick = () => {
   if (document.getElementById("picker")) return;
@@ -319,7 +319,7 @@ document.getElementById("addAsset").onclick = () => {
       // 프로젝트가 많으면 '캐릭터목록' 이 목록 아래쪽에 있어서 내려야 보임
       const many = params.get("manyprojects") === "1"
         ? [...Array(30).keys()].map(i => `10월 ${i + 1} - 0${i % 10}:00`) : ["10월 28 - 18:23"];
-      m.innerHTML = [...many, "캐릭터목록", "낭만 캐롤1집"].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
+      m.innerHTML = [...many, ...Object.keys(charProjects)].map(n => `<div class="p" style="padding:6px">${n}</div>`).join("");
       m.querySelectorAll(".p").forEach(d => d.onclick = () => { project = d.textContent; chosen = null; paint(); });
       pk.appendChild(m);
     };
